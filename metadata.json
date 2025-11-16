@@ -1,0 +1,5 @@
+{
+  "name": "Cinnamoroll's Sweet Sums",
+  "description": "A Cinnamoroll-themed number matching game. Select tiles that sum up to a target number. Special Cinnamoroll tiles grant a time bonus when they reach the bottom of the board!",
+  "requestFramePermissions": []
+}
