@@ -1,10 +1,17 @@
-import React, { StrictMode } from 'react';
-import ReactDOM from 'react-dom/client';
-import { App } from './App';
 
-const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import GameSelector from './src/platform/GameSelector';
+import './src/index.css';
+
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error("Could not find root element to mount to");
+}
+
+const root = ReactDOM.createRoot(rootElement);
 root.render(
-  <StrictMode>
-    <App />
-  </StrictMode>
+  <React.StrictMode>
+    <GameSelector />
+  </React.StrictMode>
 );
