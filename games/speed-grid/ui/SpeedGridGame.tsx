@@ -245,7 +245,7 @@ const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
 
       {/* Drag hint */}
       <div className="text-center text-white/30 text-[10px] font-bold uppercase tracking-[0.2em] py-1.5 shrink-0 select-none border-b border-white/5">
-        Drag to chain tiles
+        DRAG TO CHAIN TILES
       </div>
 
       {/* Grid Area - Dominant */}
@@ -316,6 +316,7 @@ const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
       {/* Shared Controls Layer */}
       <GameControlsLayer
         onNext={handleNext}
+        nextLabel="New Game"
         onSettings={() => setIsSettingsOpen(true)}
         centerSlot={
           <div className="h-10 flex items-center justify-center">
@@ -339,7 +340,7 @@ const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
 
       {/* Game Over Modal */}
       {phase === 'GAMEOVER' && (
-        <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-[100]">
           <div className="bg-sky-900 p-8 rounded-3xl border border-sky-500/30 flex flex-col items-center shadow-2xl">
             <h2 className="text-4xl font-black text-white mb-2">TIME UP!</h2>
             <p className="text-sky-300 text-lg mb-6">

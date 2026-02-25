@@ -14,6 +14,9 @@ interface Props {
 
   centerSlot?: React.ReactNode;
 
+  /** Override label for the Next button. Defaults to "Next". */
+  nextLabel?: string;
+
 }
 
 export default function GameControlsLayer({
@@ -22,7 +25,8 @@ export default function GameControlsLayer({
   onReset,
   onUndo,
   onSettings,
-  centerSlot
+  centerSlot,
+  nextLabel = "Next",
 
 }: Props) {
 
@@ -57,7 +61,7 @@ export default function GameControlsLayer({
             onClick={onNext}
             className="px-6 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white font-bold text-sm transition-all shadow-md active:scale-95 border-t border-white/20"
           >
-            Next
+            {nextLabel}
           </button>
         )}
 
