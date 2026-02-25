@@ -16,16 +16,16 @@ export default function GameSelector() {
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
 
-      {/* Debug selector panel */}
+      {/* Debug selector panel — hidden when a game with its own header is active */}
       <div style={{
         position: "absolute",
-        top: game === "speed-grid" ? 116 : 10,
+        top: 10,
         left: 10,
         zIndex: 9999,
         background: "rgba(0,0,0,0.65)",
         padding: 10,
         borderRadius: 10,
-        display: "flex",
+        display: game === "speed-grid" ? "none" : "flex",
         gap: 8
       }}>
 
