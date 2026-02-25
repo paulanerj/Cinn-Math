@@ -52,6 +52,7 @@ const CombineGridVNextGame: React.FC = () => {
   const [lastEquation, setLastEquation] = useState<string>('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>(Phase.PLAYING);
+  const [showNoMoves, setShowNoMoves] = useState(false);
   const [flyout, setFlyout] = useState<{ id: string; text: string; fullEq: string; startPos: { x: number; y: number } } | null>(null);
   const [isTrackerFlashing, setIsTrackerFlashing] = useState(false);
   const [countingTrophyId, setCountingTrophyId] = useState<string | null>(null);
@@ -132,6 +133,7 @@ const CombineGridVNextGame: React.FC = () => {
       setTrophiesEarned(0);
       setLastEquation('');
       setPhase(Phase.PLAYING);
+      setShowNoMoves(false);
       setHistory(null);
       setIsSettingsOpen(false);
       setFlyout(null);
@@ -161,6 +163,7 @@ const CombineGridVNextGame: React.FC = () => {
 
   const startCountingSequence = useCallback(async () => {
     if (phase !== Phase.PLAYING) return;
+    setShowNoMoves(false);
     SoundEngine.playTap();
     setPhase(Phase.COUNTING);
     const trophies = grid.flat().filter(t => t?.kind === TileKind.TROPHY) as Tile[];
@@ -252,7 +255,8 @@ const CombineGridVNextGame: React.FC = () => {
 
       if (event.type !== 'SNAPBACK' && event.type !== 'SPAWN_TILE') {
         const moveRemains = Solver.hasAnyLegalMove(next, targetValue);
-        if (!moveRemains && next.flat().some(t => t?.kind === TileKind.TROPHY)) {
+        if (!moveRemains) {
+          setShowNoMoves(true);
           setTimeout(startCountingSequence, FX_TIMING.DRY_DELAY_MS);
         }
       }
@@ -326,16 +330,25 @@ const CombineGridVNextGame: React.FC = () => {
             trackerRef={trackerRef}
           />
 
+          {showNoMoves && (
+            <div className="absolute inset-0 z-[50000] bg-black/80 flex flex-col items-center justify-center">
+              <div className="bg-zinc-900 border border-white/10 px-10 py-8 rounded-[32px] flex flex-col items-center shadow-[0_50px_100px_rgba(0,0,0,0.8)]">
+                <h2 className="text-2xl font-black text-white uppercase tracking-tight">No moves left</h2>
+                <p className="text-sm text-white/40 mt-2 uppercase tracking-widest">Counting trophies…</p>
+              </div>
+            </div>
+          )}
+
           {phase === Phase.RESULTS && (
             <div className="absolute inset-0 z-[50000] bg-black/90 flex flex-col items-center justify-center p-12 animate-[slide-up_0.5s_cubic-bezier(.17,.67,.83,.67)]">
               <div className="bg-zinc-900 border border-white/10 p-10 rounded-[40px] shadow-[0_50px_100px_rgba(0,0,0,0.8)] flex flex-col items-center w-full">
-                <h2 className="text-3xl font-black text-amber-500 mb-1 uppercase italic tracking-tighter">Golden Batch</h2>
-                <p className="text-base font-bold text-zinc-500 mb-8 tracking-[0.2em] uppercase">{trophiesEarned} Trophies Baked</p>
+                <h2 className="text-3xl font-black text-amber-500 mb-1 uppercase italic tracking-tighter">Round Over</h2>
+                <p className="text-base font-bold text-zinc-500 mb-8 tracking-[0.2em] uppercase">Final Trophies: {trophiesEarned}</p>
                 <button
                   onClick={() => { SoundEngine.playTap(); initRound({ indexShift: 1 }); }}
                   className="bg-orange-600 w-full py-5 rounded-2xl font-black text-xl shadow-[0_8px_0_rgba(154,52,18,1)] hover:bg-orange-500 active:translate-y-1.5 active:shadow-none transition-all"
                 >
-                  Continue
+                  Next Problem
                 </button>
               </div>
             </div>
@@ -353,14 +366,6 @@ const CombineGridVNextGame: React.FC = () => {
                 className="bg-[#242426] px-3 sm:px-4 py-3.5 rounded-[16px] font-bold text-[11px] uppercase text-white/90 tracking-widest shadow-md hover:text-white active:scale-95 transition-all border border-white/5"
               >
                 Prev
-              </button>
-              
-              <button
-                onClick={startCountingSequence}
-                disabled={phase !== Phase.PLAYING}
-                className="shrink-0 bg-gradient-to-b from-orange-500 to-orange-700 px-5 sm:px-7 py-3.5 rounded-[20px] font-black text-[12px] uppercase tracking-[0.18em] shadow-[0_7px_0_rgba(154,52,18,1)] hover:brightness-110 active:translate-y-1.5 active:shadow-none transition-all disabled:opacity-30 text-white border-t border-white/20 whitespace-nowrap"
-              >
-                Check Oven
               </button>
 
               <button
