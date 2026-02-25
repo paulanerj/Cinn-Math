@@ -5,7 +5,6 @@ import { Tile, GameEvent, Phase, TileKind, TargetSource } from './types';
 import { GRID_CONFIG } from './constants';
 import { FX_TIMING } from './fx/fxConfig';
 import { GridEngine } from './services/GridEngine';
-import { Solver } from './services/Solver';
 import { PlatformEngineAdapter } from './services/PlatformEngineAdapter';
 import Board, { BoardHandle } from './components/Board';
 import SettingsModal from './components/SettingsModal';
@@ -17,9 +16,13 @@ import GameHUD from '@/src/platform/hud/GameHUD';
 import { useToast } from '@/src/platform/ui/ToastContext';
 
 const DEFAULT_RECIPE = [12, 15, 24, 32, 56];
-const BUILD_STAMP = "CG-STAMP-1";
+const BUILD_STAMP = "CG-STAMP-2";
 
-const CombineGridVNextGame: React.FC = () => {
+interface CombineGridVNextGameProps {
+  onBack?: () => void;
+}
+
+const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) => {
   const { addToast } = useToast();
   const [grid, setGrid] = useState<(Tile | null)[][]>([]);
   const [history, setHistory] = useState<{
@@ -255,8 +258,10 @@ const CombineGridVNextGame: React.FC = () => {
       }
 
       if (event.type !== 'SNAPBACK' && event.type !== 'SPAWN_TILE') {
-        const moveRemains = Solver.hasAnyLegalMove(next, targetValue);
-        if (!moveRemains) {
+        const flat = next.flat().filter(Boolean) as Tile[];
+        const liveTileCount = flat.filter(t => t.kind === TileKind.NUMBER).length;
+        const bombCount = flat.filter(t => t.kind === TileKind.BOMB).length;
+        if (liveTileCount === 1 && bombCount === 0) {
           setShowNoMoves(true);
           setTimeout(startCountingSequence, FX_TIMING.DRY_DELAY_MS);
         }
@@ -307,6 +312,14 @@ const CombineGridVNextGame: React.FC = () => {
           target={targetValue}
           score={trophiesEarned}
           mode="CombineGrid"
+          rightSlot={onBack ? (
+            <button
+              onClick={onBack}
+              className="text-white/60 hover:text-white text-sm font-bold px-2 py-1 transition-colors"
+            >
+              ‹ Back
+            </button>
+          ) : undefined}
         />
 
         <main className="flex-1 min-h-0 flex items-center justify-center p-2 sm:p-3 pt-4 sm:pt-6 relative overflow-hidden">
@@ -356,10 +369,9 @@ const CombineGridVNextGame: React.FC = () => {
           )}
         </main>
 
-        <GameControlsLayer 
+        <GameControlsLayer
           onUndo={handleUndo}
           onReset={() => { SoundEngine.playTap(); initRound(); }}
-          onSettings={() => { SoundEngine.playTap(); setIsSettingsOpen(true); }}
           centerSlot={
             <div className="flex gap-2 items-center">
               <button

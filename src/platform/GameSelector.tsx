@@ -4,41 +4,54 @@ import React, { useState } from "react";
 import CombineGridGame from "../../games/combine-grid-vnext/combinegrid-v9/App";
 import SpeedGridGame from "../../games/speed-grid/ui/SpeedGridGame";
 
-type GameType =
-  | "combine-grid"
-  | "speed-grid";
+type GameType = "splash" | "combine-grid" | "speed-grid";
 
 export default function GameSelector() {
 
-  // CombineGrid is default
-  const [game, setGame] = useState<GameType>("combine-grid");
+  const [game, setGame] = useState<GameType>("splash");
 
-  return (
-    <div style={{ width: "100%", height: "100%", position: "relative" }}>
-
-      {/* Debug selector panel — hidden when a game with its own header is active */}
-      <div style={{
-        position: "absolute",
-        top: 10,
-        left: 10,
-        zIndex: 9999,
-        background: "rgba(0,0,0,0.65)",
-        padding: 10,
-        borderRadius: 10,
-        display: game === "speed-grid" ? "none" : "flex",
-        gap: 8
-      }}>
+  if (game === "splash") {
+    return (
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          background: "#141416",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 20,
+          fontFamily: "sans-serif",
+        }}
+      >
+        <div
+          style={{
+            color: "#fff",
+            fontSize: 32,
+            fontWeight: 900,
+            letterSpacing: 4,
+            marginBottom: 12,
+            textTransform: "uppercase",
+          }}
+        >
+          Cinn Math
+        </div>
 
         <button
           onClick={() => setGame("combine-grid")}
           style={{
-            padding: "6px 12px",
-            borderRadius: 6,
+            width: 240,
+            padding: "20px 0",
+            borderRadius: 20,
             border: "none",
-            background: game === "combine-grid" ? "#22c55e" : "#333",
+            background: "#e67e22",
             color: "#fff",
-            fontWeight: 600,
-            cursor: "pointer"
+            fontSize: 17,
+            fontWeight: 800,
+            cursor: "pointer",
+            letterSpacing: 1,
+            boxShadow: "0 6px 0 rgba(154,52,18,1)",
           }}
         >
           CombineGrid
@@ -47,25 +60,33 @@ export default function GameSelector() {
         <button
           onClick={() => setGame("speed-grid")}
           style={{
-            padding: "6px 12px",
-            borderRadius: 6,
+            width: 240,
+            padding: "20px 0",
+            borderRadius: 20,
             border: "none",
-            background: game === "speed-grid" ? "#3b82f6" : "#333",
+            background: "#3b82f6",
             color: "#fff",
-            fontWeight: 600,
-            cursor: "pointer"
+            fontSize: 17,
+            fontWeight: 800,
+            cursor: "pointer",
+            letterSpacing: 1,
+            boxShadow: "0 6px 0 rgba(29,78,216,1)",
           }}
         >
           SpeedGrid
         </button>
-
       </div>
+    );
+  }
 
-      {/* Game mount */}
-      {game === "combine-grid" && <CombineGridGame />}
-
-      {game === "speed-grid" && <SpeedGridGame onBack={() => setGame("combine-grid")} />}
-
+  return (
+    <div style={{ width: "100%", height: "100%" }}>
+      {game === "combine-grid" && (
+        <CombineGridGame onBack={() => setGame("splash")} />
+      )}
+      {game === "speed-grid" && (
+        <SpeedGridGame onBack={() => setGame("splash")} />
+      )}
     </div>
   );
 }
