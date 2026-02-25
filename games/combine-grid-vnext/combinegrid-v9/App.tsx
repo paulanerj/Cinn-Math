@@ -174,16 +174,16 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
     let count = 0;
 
     for (const t of trophies) {
-      setCountingTrophyId(t.id);
-      SoundEngine.playCountStep(count);
-      await new Promise(r => setTimeout(r, FX_TIMING.COUNT_STEP_MS));
+      await new Promise(r => setTimeout(r, 500));
       count++;
       setTrophiesEarned(count);
+      setCountingTrophyId(t.id);
+      SoundEngine.playCountStep(count - 1);
     }
 
     setCountingTrophyId(null);
+    SoundEngine.playResultsFanfare();
     setTimeout(() => {
-      SoundEngine.playResultsFanfare();
       setPhase(Phase.RESULTS);
     }, 600);
   }, [grid, phase]);
@@ -261,7 +261,8 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
         const flat = next.flat().filter(Boolean) as Tile[];
         const liveTileCount = flat.filter(t => t.kind === TileKind.NUMBER).length;
         const bombCount = flat.filter(t => t.kind === TileKind.BOMB).length;
-        if (liveTileCount === 1 && bombCount === 0) {
+        const deadTileCount = flat.filter(t => t.kind === TileKind.STONE).length;
+        if (liveTileCount === 1 && bombCount === 0 && deadTileCount === 0) {
           setShowNoMoves(true);
           setTimeout(startCountingSequence, FX_TIMING.DRY_DELAY_MS);
         }
