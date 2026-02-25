@@ -19,7 +19,7 @@ export default function SpeedGridHUD({ target, time, score }: Props) {
       {/* TARGET */}
       <div className="flex flex-col items-center justify-center">
         <span className="text-white/40 text-[9px] font-bold uppercase tracking-widest">
-          Target
+          TARGET
         </span>
         <span className="text-white text-xl font-black leading-tight">
           {target}
@@ -29,9 +29,9 @@ export default function SpeedGridHUD({ target, time, score }: Props) {
       {/* TIME */}
       <div className="flex flex-col items-center justify-center">
         <span className={`text-[9px] font-bold uppercase tracking-widest ${urgent ? 'text-red-400' : 'text-white/40'}`}>
-          Time
+          TIME
         </span>
-        <span className={`text-xl font-black font-mono leading-tight ${urgent ? 'text-red-400 animate-pulse' : 'text-white'}`}>
+        <span className={`text-xl font-black font-mono leading-tight ${urgent ? 'text-red-400' : 'text-white'}`}>
           {time}s
         </span>
       </div>
@@ -39,7 +39,7 @@ export default function SpeedGridHUD({ target, time, score }: Props) {
       {/* SCORE */}
       <div className="flex flex-col items-center justify-center">
         <span className="text-white/40 text-[9px] font-bold uppercase tracking-widest">
-          Score
+          SCORE
         </span>
         <span className="text-white text-xl font-black leading-tight">
           {score}

@@ -39,7 +39,7 @@ export default function SpeedGridHeader({ onBack, operator, onOperatorChange }: 
 
       {/* Title */}
       <span className="text-white font-black text-xs tracking-[0.25em] uppercase select-none">
-        SpeedGrid
+        SPEEDGRID
       </span>
 
       {/* Operator dropdown */}

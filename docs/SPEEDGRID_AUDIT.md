@@ -198,3 +198,51 @@ The wrapper div was given `position: "relative"` (so the absolute child anchors 
 
 - When **CombineGrid** is active: panel stays at `top: 10` → **pixel-identical to current deployed build** ✓
 - When **SpeedGrid** is active: panel moves to `top: 68` (8 px below the 60 px GameHUD) → TARGET and Score are no longer occluded ✓
+
+---
+
+## 6. SG-4.1 — Settings Access Verification
+
+**Date verified:** 2026-02-25
+**Question:** Does removing the footer Settings button from SpeedGrid regress any functionality?
+
+### SettingsMenu.tsx — full options inventory
+
+```
+games/speed-grid/ui/SettingsMenu.tsx
+Props: { isOpen, onClose, currentOperator, onOperatorChange }
+```
+
+| Section | Control | Values |
+|---------|---------|--------|
+| Operator Mode | Two buttons | Addition (+) / Multiply (×) |
+
+**No other controls exist in SettingsMenu.** There is no timer length, difficulty level, grid size, sound toggle, or any other setting.
+
+### Access preserved via header dropdown ✓
+
+`SpeedGridHeader` exposes the same operator toggle directly in the top bar:
+
+```tsx
+// SpeedGridHeader.tsx
+const LABEL: Record<Operator, string> = {
+  addition: 'Addition',
+  multiplication: 'Multiply',
+};
+// Dropdown renders both options, calls onOperatorChange on selection.
+```
+
+The `onOperatorChange` callback in both paths ultimately calls `handleOperatorChange` in `SpeedGridGame.tsx`, which does `setOperator(newOp); startRound(newOp)` — identical behavior.
+
+**Verdict:** Removing `onSettings` from the `GameControlsLayer` call for SpeedGrid is safe. No feature regression. The SettingsMenu component remains in the codebase and renders when `isSettingsOpen === true`, but since nothing sets it to `true` anymore, it is effectively dormant. It can be removed in a future cleanup stage if desired.
+
+---
+
+## 7. SG-5 — Contract Polish Summary
+
+| Item | Before | After | Reason |
+|------|--------|-------|--------|
+| Header title source | `"SpeedGrid"` | `"SPEEDGRID"` | Explicit; matches contract without relying on CSS |
+| HUD label sources | `"Target"`, `"Time"`, `"Score"` | `"TARGET"`, `"TIME"`, `"SCORE"` | Same principle |
+| `animate-pulse` on urgent timer | Present | Removed | Not in screenshot contract; subtle `text-red-400` retained |
+| Z-index stack | Modal `z-[100]`, Header `z-[60]` | Unchanged | Already correct |
