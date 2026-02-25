@@ -17,6 +17,7 @@ import GameHUD from '@/src/platform/hud/GameHUD';
 import { useToast } from '@/src/platform/ui/ToastContext';
 
 const DEFAULT_RECIPE = [12, 15, 24, 32, 56];
+const BUILD_STAMP = "CG-STAMP-1";
 
 const CombineGridVNextGame: React.FC = () => {
   const { addToast } = useToast();
@@ -377,6 +378,7 @@ const CombineGridVNextGame: React.FC = () => {
             </div>
           }
         />
+        <div className="absolute bottom-0 right-0 text-[8px] text-white/20 pr-1 pb-0.5 z-[60000] pointer-events-none select-none">{BUILD_STAMP}</div>
       </div>
 
       {flyout && (
