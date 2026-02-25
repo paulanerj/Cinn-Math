@@ -12,10 +12,10 @@ import { GamePhase } from '../core/GameState';
 import { GravityAnimator } from '../gravity/GravityAnimator';
 import GridViewport from '@/src/platform/grid/GridViewport';
 import GameControlsLayer from '@/src/platform/controls/GameControlsLayer';
-import GameHUD from '@/src/platform/hud/GameHUD';
 import { useGridMetrics } from '@/src/platform/grid/useGridMetrics';
 import { useToast } from '@/src/platform/ui/ToastContext';
 import SpeedGridHeader from './SpeedGridHeader';
+import SpeedGridHUD from './SpeedGridHUD';
 
 const ROWS = 6;
 const COLS = 5;
@@ -236,11 +236,11 @@ const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
         onOperatorChange={handleOperatorChange}
       />
 
-      {/* HUD: Target / Time / Score */}
-      <GameHUD
+      {/* HUD: TARGET | TIME | SCORE — three-column SpeedGrid-specific layout */}
+      <SpeedGridHUD
         target={target}
-        score={score}
         time={timeLeft}
+        score={score}
       />
 
       {/* Drag hint */}
@@ -313,11 +313,11 @@ const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
         </div>
       </GridViewport>
 
-      {/* Shared Controls Layer */}
+      {/* Shared Controls Layer — onSettings omitted: "New Game" is the sole button
+           and renders centered. Mode changes are available via the header dropdown. */}
       <GameControlsLayer
         onNext={handleNext}
         nextLabel="New Game"
-        onSettings={() => setIsSettingsOpen(true)}
         centerSlot={
           <div className="h-10 flex items-center justify-center">
             {selectedChain.length > 0 ? (
