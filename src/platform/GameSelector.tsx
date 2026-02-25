@@ -19,7 +19,7 @@ export default function GameSelector() {
       {/* Debug selector panel */}
       <div style={{
         position: "absolute",
-        top: game === "speed-grid" ? 68 : 10,
+        top: game === "speed-grid" ? 116 : 10,
         left: 10,
         zIndex: 9999,
         background: "rgba(0,0,0,0.65)",
@@ -64,7 +64,7 @@ export default function GameSelector() {
       {/* Game mount */}
       {game === "combine-grid" && <CombineGridGame />}
 
-      {game === "speed-grid" && <SpeedGridGame />}
+      {game === "speed-grid" && <SpeedGridGame onBack={() => setGame("combine-grid")} />}
 
     </div>
   );

@@ -15,6 +15,7 @@ import GameControlsLayer from '@/src/platform/controls/GameControlsLayer';
 import GameHUD from '@/src/platform/hud/GameHUD';
 import { useGridMetrics } from '@/src/platform/grid/useGridMetrics';
 import { useToast } from '@/src/platform/ui/ToastContext';
+import SpeedGridHeader from './SpeedGridHeader';
 
 const ROWS = 6;
 const COLS = 5;
@@ -26,7 +27,11 @@ const toGridCell = (t: EngineTile): GridCell => ({
   key: Math.random().toString(36).substr(2, 9),
 });
 
-const SpeedGridGame: React.FC = () => {
+interface SpeedGridGameProps {
+  onBack?: () => void;
+}
+
+const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
   const { addToast } = useToast();
   const [grid, setGrid] = useState<GridCell[][]>([]);
   const [target, setTarget] = useState(12);
@@ -224,14 +229,25 @@ const SpeedGridGame: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full w-full bg-[#1a1a1c] text-white game-ui">
-      {/* Header Area */}
+      {/* SpeedGrid-specific top header: Back / title / mode dropdown */}
+      <SpeedGridHeader
+        onBack={onBack}
+        operator={operator}
+        onOperatorChange={handleOperatorChange}
+      />
+
+      {/* HUD: Target / Time / Score */}
       <GameHUD
         target={target}
         score={score}
         time={timeLeft}
-        mode="SpeedGrid"
       />
-      
+
+      {/* Drag hint */}
+      <div className="text-center text-white/30 text-[10px] font-bold uppercase tracking-[0.2em] py-1.5 shrink-0 select-none border-b border-white/5">
+        Drag to chain tiles
+      </div>
+
       {/* Grid Area - Dominant */}
       <GridViewport>
         <div 
