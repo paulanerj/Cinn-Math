@@ -14,12 +14,12 @@ export default function GameSelector() {
   const [game, setGame] = useState<GameType>("combine-grid");
 
   return (
-    <div style={{ width: "100%", height: "100%" }}>
+    <div style={{ width: "100%", height: "100%", position: "relative" }}>
 
       {/* Debug selector panel */}
       <div style={{
         position: "absolute",
-        top: 10,
+        top: game === "speed-grid" ? 68 : 10,
         left: 10,
         zIndex: 9999,
         background: "rgba(0,0,0,0.65)",
