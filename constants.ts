@@ -16,7 +16,7 @@ export const DIFFICULTY_SETTINGS: Record<Difficulty, { initialTime: number; tile
 // ─── Diagnostics ─────────────────────────────────────────────────────────────
 // BUILD_STAMP: rendered on the grid every session so you can confirm which
 // deployed build you are looking at. Update this after each deploy/commit.
-export const BUILD_STAMP = '61a8487'; // short git hash of parent commit
+export const BUILD_STAMP = '62a4635'; // short git hash of parent commit
 
 // DEBUG_END: when true, renders a live overlay of end-condition counters and
 // logs to console once when the game ends. Set false for production.

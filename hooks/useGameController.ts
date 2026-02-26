@@ -39,6 +39,8 @@ export const useGameController = (
     // ── END-CONDITION DIAGNOSTICS ────────────────────────────────────────────
     // Counts how many times the end-evaluation pipeline ran this session.
     const endCheckRunsRef = useRef(0);
+    // Guards against dispatching GAME_OVER more than once per game.
+    const endTriggeredRef = useRef(false);
     // Holds the latest snapshot for the debug overlay (alive even when DEBUG_END=false).
     const [debugEndInfo, setDebugEndInfo] = useState<DebugEndInfo>({
         endCheckRuns: 0,
@@ -53,25 +55,46 @@ export const useGameController = (
      * evaluateEndCondition
      * Called once at the very end of every resolve pipeline (after all gravity
      * and bonus effects settle) — i.e. just before each FINISH_TURN dispatch.
-     * Does NOT change the actual end rule; that stays time-based for now.
-     * When DEBUG_END=true it updates the overlay state.
+     *
+     * END RULE: validPlayableCount === 1 && bombCount === 0
+     *   • validPlayableCount = tiles with type 'number' (the only playable kind
+     *     in this build; 'time' tiles are bonus tiles, not player-selectable)
+     *   • bombCount = 0 always in this build (no bomb tile type exists yet)
+     *   • deadCount = 0 always in this build (no stone/frozen tile type yet)
+     *   So the live trigger is simply: exactly 1 number tile remains on board.
+     *
+     * When condition is met, dispatches GAME_OVER and sets endTriggeredRef so
+     * the caller skips FINISH_TURN.  Use endTriggeredRef externally to gate
+     * FINISH_TURN — call sites must check !endTriggeredRef.current after this.
+     * When DEBUG_END=true also updates the overlay state.
      */
     const evaluateEndCondition = useCallback((grid: (TileType | null)[][]) => {
         endCheckRunsRef.current += 1;
         const allTiles = grid.flat();
         const numberTiles = allTiles.filter(t => t?.type === 'number');
         const timeTiles  = allTiles.filter(t => t?.type === 'time');
+        const validPlayableCount = numberTiles.length;
+        const bombCount = 0; // no bomb tile type in this build
+        const deadCount = 0; // no dead/stone tile type in this build
         const info: DebugEndInfo = {
             endCheckRuns:      endCheckRunsRef.current,
             totalNonNullTiles: allTiles.filter(t => t !== null).length,
-            validPlayableCount: numberTiles.length,
-            bombCount:  0, // no bomb tile type in this build
-            deadCount:  0, // no dead tile type in this build
+            validPlayableCount,
+            bombCount,
+            deadCount,
             remainingKinds: `NUMBER:${numberTiles.length} TIME:${timeTiles.length}`,
         };
         if (DEBUG_END) setDebugEndInfo(info);
+
+        // ── 1-tile end rule ──────────────────────────────────────────────────
+        if (validPlayableCount === 1 && bombCount === 0 && !endTriggeredRef.current) {
+            endTriggeredRef.current = true;
+            dispatch({ type: 'GAME_OVER' });
+            if (DEBUG_END) console.log('[CG 1-tile end rule fired]', info);
+        }
+
         return info;
-    }, []); // stable: only touches refs + stable setter
+    }, [dispatch]); // dispatch is stable (useReducer guarantee)
 
     // --- Game Timer ---
     useEffect(() => {
@@ -108,13 +131,19 @@ export const useGameController = (
     // --- Initial Board Setup & Target Generation ---
     useEffect(() => {
         if (status === 'playing' && targetNumber === 0) {
+            // New game: reset the one-shot end-trigger guard so a fresh game
+            // can end correctly even after a previous game already triggered it.
+            endTriggeredRef.current = false;
             // After the initial drop animation, generate the first target
             setTimeout(() => {
                 if (!isMounted.current) return;
                 evaluateEndCondition(board); // baseline snapshot at game start
-                const newTarget = findPathForTarget(board, config.mode);
-                dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
-                dispatch({ type: 'RESET_ANIMATIONS' }); // Clear dropping state
+                // On a full fresh board the 1-tile rule won't fire, but guard anyway.
+                if (!endTriggeredRef.current) {
+                    const newTarget = findPathForTarget(board, config.mode);
+                    dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
+                    dispatch({ type: 'RESET_ANIMATIONS' }); // Clear dropping state
+                }
             }, DROP_ANIMATION_DURATION);
         }
     }, [status, targetNumber, board, config.mode, dispatch, isMounted, evaluateEndCondition]);
@@ -226,16 +255,22 @@ export const useGameController = (
                         setTimeout(() => {
                              if (!isMounted.current) return;
                              evaluateEndCondition(nextBoard); // ← end eval: bonus path
-                             const newTarget = findPathForTarget(nextBoard, config.mode);
-                             dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
+                             // Skip FINISH_TURN if end rule already fired GAME_OVER.
+                             if (!endTriggeredRef.current) {
+                                 const newTarget = findPathForTarget(nextBoard, config.mode);
+                                 dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
+                             }
                         }, DROP_ANIMATION_DURATION);
                     }, FALL_OFF_ANIMATION_DURATION);
 
                 } else {
                     // 3b. No time bonus: evaluate end condition, then finish turn
                     evaluateEndCondition(state.board); // ← end eval: no-bonus path
-                    const newTarget = findPathForTarget(state.board, config.mode);
-                    dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
+                    // Skip FINISH_TURN if end rule already fired GAME_OVER.
+                    if (!endTriggeredRef.current) {
+                        const newTarget = findPathForTarget(state.board, config.mode);
+                        dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
+                    }
                 }
             }, DROP_ANIMATION_DURATION);
         }

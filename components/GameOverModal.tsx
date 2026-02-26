@@ -20,54 +20,72 @@ const SadCinnamoroll = () => (
     </div>
 );
 
+// Number of ticks used to count the score up.
+// 20 ticks × 500 ms = 10 s maximum counting time regardless of score.
+const COUNTING_STEPS = 20;
 
 export const GameOverModal = ({ show, score, bestScore, onRestart, themeAssets, volume }: GameOverModalProps) => {
     const [displayScore, setDisplayScore] = useState(0);
+    // Becomes true only after the counting sequence finishes; gates the button.
+    const [countingDone, setCountingDone] = useState(false);
     const scoreRef = useRef<HTMLParagraphElement>(null);
     const playSound = useGameSounds(themeAssets.sounds, volume);
     const soundPlayedRef = useRef(false);
 
+    // Play the game-over stinger once when the modal first appears.
     useEffect(() => {
         if (show && !soundPlayedRef.current) {
             playSound('gameover');
             soundPlayedRef.current = true;
         } else if (!show) {
-            soundPlayedRef.current = false; // Reset for next time
+            soundPlayedRef.current = false;
         }
     }, [show, playSound]);
 
+    // Counting sequence: tick at 2 Hz, sound on each step, fanfare at end.
     useEffect(() => {
-        if (show) {
-            let startTimestamp: number | null = null;
-            const duration = 1500; // Animation duration in ms
-            const step = (timestamp: number) => {
-                if (!startTimestamp) startTimestamp = timestamp;
-                const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-                const currentAnimatedScore = Math.floor(progress * score);
-                setDisplayScore(currentAnimatedScore);
-                
-                if(scoreRef.current && currentAnimatedScore % 5 === 0 && progress < 1) {
-                    scoreRef.current.classList.add('counting');
-                    setTimeout(() => scoreRef.current?.classList.remove('counting'), 150);
-                }
-
-                if (progress < 1) {
-                    requestAnimationFrame(step);
-                } else {
-                    setDisplayScore(score); // Ensure final score is exact
-                    if(scoreRef.current) {
-                        scoreRef.current.classList.add('counting');
-                        setTimeout(() => scoreRef.current?.classList.remove('counting'), 150);
-                    }
-                }
-            };
-            requestAnimationFrame(step);
-        } else {
-            // Reset score when hidden
+        if (!show) {
             setDisplayScore(0);
+            setCountingDone(false);
+            return;
         }
-    }, [score, show]);
-    
+
+        // Edge case: score of 0 — skip counting, show button immediately.
+        if (score === 0) {
+            setCountingDone(true);
+            return;
+        }
+
+        const increment = Math.ceil(score / COUNTING_STEPS);
+        let step = 0;
+        setDisplayScore(0);
+        setCountingDone(false);
+
+        const pulse = () => {
+            if (scoreRef.current) {
+                scoreRef.current.classList.add('counting');
+                setTimeout(() => scoreRef.current?.classList.remove('counting'), 150);
+            }
+        };
+
+        const interval = setInterval(() => {
+            step += 1;
+            const next = Math.min(step * increment, score);
+            setDisplayScore(next);
+            pulse();
+
+            if (next >= score) {
+                clearInterval(interval);
+                setCountingDone(true);
+                playSound('combo'); // fanfare when counting finishes
+            } else {
+                playSound('select'); // tick on each intermediate step
+            }
+        }, 500); // 2 ticks per second
+
+        return () => clearInterval(interval);
+    }, [show, score, playSound]);
+
     return (
         <ModalWrapper show={show} className="game-over-modal" modalContentClass={themeAssets.ui.modalContent}>
             <SadCinnamoroll />
@@ -76,16 +94,19 @@ export const GameOverModal = ({ show, score, bestScore, onRestart, themeAssets, 
                 <p className="text-lg text-white">Your Score</p>
                 <p ref={scoreRef} className="score-display text-5xl text-white transition-colors duration-100" style={{ textShadow: '2px 2px 0px rgba(0,0,0,0.2)' }}>{displayScore}</p>
             </div>
-            { score > bestScore && score > 0 ? 
-                <p className="text-xl text-yellow-500 font-bold my-2">NEW BEST!</p> 
-                : <p className="text-lg text-gray-600 font-bold my-2">Best: {bestScore}</p> 
+            { score > bestScore && score > 0 ?
+                <p className="text-xl text-yellow-500 font-bold my-2">NEW BEST!</p>
+                : <p className="text-lg text-gray-600 font-bold my-2">Best: {bestScore}</p>
             }
-            <button 
-                onClick={onRestart} 
-                className={`theme-button bg-blue-500 hover:bg-blue-600 text-white py-4 px-10 text-xl mt-6 ${themeAssets.ui.button}`}
-            >
-                PLAY AGAIN
-            </button>
+            {/* Button appears only after the counting sequence completes. */}
+            {countingDone && (
+                <button
+                    onClick={onRestart}
+                    className={`theme-button bg-blue-500 hover:bg-blue-600 text-white py-4 px-10 text-xl mt-6 ${themeAssets.ui.button}`}
+                >
+                    PLAY AGAIN
+                </button>
+            )}
         </ModalWrapper>
     );
 };
