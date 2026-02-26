@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { EngineAdapter, Operator } from '../adapter/EngineAdapter';
-import { ChainSelector, ChainNode } from '../input/ChainSelector';
+import { ChainSelector } from '../input/ChainSelector';
 import { GravitySystem, GridCell } from '../gravity/GravitySystem';
 import { TimerSystem } from '../timer/TimerSystem';
 import { ScoringSystem } from '../scoring/ScoreSystem';
@@ -56,6 +56,7 @@ const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
   const { ref: metricsRef, metrics } = useGridMetrics(ROWS, COLS);
 
   const DEBUG_SHOW_PATH = false;
+  const DEBUG_INPUT    = false;
 
   const startRound = useCallback((op: Operator) => {
     try {
@@ -102,27 +103,6 @@ const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
     const chain = selectorRef.current.getChain();
     setSelectedChain(chain.map((n) => n.id));
     setCurrentValue(selectorRef.current.evaluateProduct(operator));
-  };
-
-  const handlePointerDown = (r: number, c: number, cell: GridCell) => {
-    if (phase !== 'READY') return;
-    const node: ChainNode = { r, c, val: cell.val, id: cell.id };
-    selectorRef.current.start(node);
-    updateSelection();
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (phase !== 'READY') return;
-    const touch = e.touches[0];
-    const el = document.elementFromPoint(touch.clientX, touch.clientY);
-    const tileEl = el?.closest('[data-grid-coord]');
-    if (tileEl) {
-      const [r, c] = tileEl.getAttribute('data-grid-coord')!.split(',').map(Number);
-      const cell = grid[r][c];
-      if (selectorRef.current.addToChain({ r, c, val: cell.val, id: cell.id })) {
-        updateSelection();
-      }
-    }
   };
 
   const handlePointerUp = async () => {
@@ -200,26 +180,47 @@ const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
     setPhase('READY');
   };
 
-  const [isDragging, setIsDragging] = useState(false);
+  // ── Pointer Events — unified mouse + touch ───────────────────────────────
+  // isDraggingRef: avoids a state re-render just to gate move/up.
+  const isDraggingRef    = useRef(false);
+  const pointerMoveCount = useRef(0);
 
-  const onMouseDown = (r: number, c: number, cell: GridCell) => {
-    setIsDragging(true);
-    handlePointerDown(r, c, cell);
+  const handleGridPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (phase !== 'READY') return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const tileEl = el?.closest('[data-grid-coord]');
+    if (!tileEl) return;
+    const [r, c] = tileEl.getAttribute('data-grid-coord')!.split(',').map(Number);
+    const cell = grid[r]?.[c];
+    if (!cell) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    isDraggingRef.current = true;
+    selectorRef.current.start({ r, c, val: cell.val, id: cell.id });
+    updateSelection();
+    if (DEBUG_INPUT) { pointerMoveCount.current = 0; console.log('[INPUT] pointerdown detected'); }
   };
 
-  const onMouseEnter = (r: number, c: number, cell: GridCell) => {
-    if (phase !== 'READY') return;
-    if (!isDragging) return;
-
+  const handleGridPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingRef.current || phase !== 'READY') return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const tileEl = el?.closest('[data-grid-coord]');
+    if (!tileEl) return;
+    const [r, c] = tileEl.getAttribute('data-grid-coord')!.split(',').map(Number);
+    const cell = grid[r]?.[c];
+    if (!cell) return;
     if (selectorRef.current.addToChain({ r, c, val: cell.val, id: cell.id })) {
       updateSelection();
     }
+    if (DEBUG_INPUT) { pointerMoveCount.current++; console.log('[INPUT] pointermove count:', pointerMoveCount.current); }
   };
 
-  const onMouseUp = () => {
-    setIsDragging(false);
+  const handleGridPointerUp = (_e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
     void handlePointerUp();
+    if (DEBUG_INPUT) { console.log('[INPUT] pointerup detected'); }
   };
+  // ── End Pointer Events ────────────────────────────────────────────────────
 
   const handleNext = () => {
     startRound(operator);
@@ -250,12 +251,14 @@ const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
 
       {/* Grid Area - Dominant */}
       <GridViewport>
-        <div 
+        <div
           ref={metricsRef}
           className="w-full h-full relative z-0 flex items-center justify-center"
-          onMouseUp={onMouseUp}
-          onTouchEnd={() => void handlePointerUp()}
-          onTouchMove={handleTouchMove}
+          style={{ touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+          onPointerDown={handleGridPointerDown}
+          onPointerMove={handleGridPointerMove}
+          onPointerUp={handleGridPointerUp}
+          onPointerCancel={handleGridPointerUp}
         >
           {cellSize > 0 && (
             <div
@@ -278,9 +281,7 @@ const SpeedGridGame: React.FC<SpeedGridGameProps> = ({ onBack }) => {
                       key={cell.key}
                       data-grid-coord={`${r},${c}`}
                       data-tile-id={cell.id}
-                      onMouseDown={() => onMouseDown(r, c, cell)}
-                      onMouseEnter={() => onMouseEnter(r, c, cell)}
-                      className="w-full h-full p-1 select-none" 
+                      className="w-full h-full p-1 select-none"
                       style={{ 
                         width: cellSize, 
                         height: cellSize,
