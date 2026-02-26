@@ -16,7 +16,7 @@ import GameHUD from '@/src/platform/hud/GameHUD';
 import { useToast } from '@/src/platform/ui/ToastContext';
 
 const DEFAULT_RECIPE = [12, 15, 24, 32, 56];
-const BUILD_STAMP = "CG-STAMP-2";
+const DEBUG_END = false; // set true to diagnose end-trigger failures
 
 interface CombineGridVNextGameProps {
   onBack?: () => void;
@@ -264,9 +264,16 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
         const validCount = flat.filter(isValidPlayable).length;
         const bombCount  = flat.filter(t => t.kind === TileKind.BOMB).length;
 
-        const DEBUG_END = false;
+        const deadCount = flat.length - validCount - bombCount; // STONE, OP, BLANK, etc.
         if (DEBUG_END) {
-          console.log('[END_CHECK]', { validCount, bombCount, kinds: flat.map(t => t.kind) });
+          console.log('[END_CHECK]', {
+            event: event.type,
+            totalTiles: flat.length,
+            validPlayableCount: validCount,
+            bombCount,
+            deadCount,
+            kinds: flat.map(t => t.kind),
+          });
         }
 
         if (validCount === 1 && bombCount === 0) {
