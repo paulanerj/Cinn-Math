@@ -169,9 +169,9 @@ export const App = () => {
                 >{BUILD_STAMP}</span>
             </div>
 
-            {/* END DEBUG overlay — only mounts when DEBUG_END=true */}
+            {/* END DEBUG overlay + Force End — only mounts when DEBUG_END=true */}
             {DEBUG_END && cgDebug && (
-                <div style={{ position: 'fixed', top: 8, left: 8, background: 'rgba(0,0,0,0.78)', color: '#39ff14', fontFamily: 'monospace', fontSize: 10, padding: '5px 8px', zIndex: 9999, lineHeight: 1.6, borderRadius: 4, pointerEvents: 'none' }}>
+                <div style={{ position: 'fixed', top: 8, left: 8, background: 'rgba(0,0,0,0.78)', color: '#39ff14', fontFamily: 'monospace', fontSize: 10, padding: '5px 8px', zIndex: 9999, lineHeight: 1.6, borderRadius: 4 }}>
                     <div style={{ fontWeight: 'bold', marginBottom: 2 }}>⚙ END DEBUG</div>
                     <div>runs: {cgDebug.endCheckRuns}</div>
                     <div>nonNull: {cgDebug.totalNonNullTiles}</div>
@@ -179,6 +179,16 @@ export const App = () => {
                     <div>bombs: {cgDebug.bombCount}</div>
                     <div>dead: {cgDebug.deadCount}</div>
                     <div>{cgDebug.remainingKinds}</div>
+                    {/* Force End: triggers the same GAME_OVER path as the real end rule.
+                        Only shown while actively playing so it doesn't fire twice. */}
+                    {status === 'playing' && (
+                        <button
+                            onClick={() => dispatch({ type: 'GAME_OVER' })}
+                            style={{ display: 'block', width: '100%', marginTop: 6, padding: '2px 0', background: '#cc2200', color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer', fontSize: 10, fontFamily: 'monospace', letterSpacing: 0.5 }}
+                        >
+                            ▶ Force End
+                        </button>
+                    )}
                 </div>
             )}
         </div>

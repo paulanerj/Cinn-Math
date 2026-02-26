@@ -20,10 +20,6 @@ const SadCinnamoroll = () => (
     </div>
 );
 
-// Number of ticks used to count the score up.
-// 20 ticks × 500 ms = 10 s maximum counting time regardless of score.
-const COUNTING_STEPS = 20;
-
 export const GameOverModal = ({ show, score, bestScore, onRestart, themeAssets, volume }: GameOverModalProps) => {
     const [displayScore, setDisplayScore] = useState(0);
     // Becomes true only after the counting sequence finishes; gates the button.
@@ -42,7 +38,7 @@ export const GameOverModal = ({ show, score, bestScore, onRestart, themeAssets, 
         }
     }, [show, playSound]);
 
-    // Counting sequence: tick at 2 Hz, sound on each step, fanfare at end.
+    // Counting sequence: +1 every 500 ms (2 per second), tick sound per step, fanfare at end.
     useEffect(() => {
         if (!show) {
             setDisplayScore(0);
@@ -56,8 +52,6 @@ export const GameOverModal = ({ show, score, bestScore, onRestart, themeAssets, 
             return;
         }
 
-        const increment = Math.ceil(score / COUNTING_STEPS);
-        let step = 0;
         setDisplayScore(0);
         setCountingDone(false);
 
@@ -68,20 +62,20 @@ export const GameOverModal = ({ show, score, bestScore, onRestart, themeAssets, 
             }
         };
 
+        // count is mutated inside the closure; safe because it's local to this effect run.
+        let count = 0;
         const interval = setInterval(() => {
-            step += 1;
-            const next = Math.min(step * increment, score);
-            setDisplayScore(next);
+            count += 1;
+            setDisplayScore(count);
             pulse();
-
-            if (next >= score) {
+            if (count >= score) {
                 clearInterval(interval);
                 setCountingDone(true);
-                playSound('combo'); // fanfare when counting finishes
+                playSound('combo'); // fanfare: all trophies counted
             } else {
-                playSound('select'); // tick on each intermediate step
+                playSound('select'); // tick: one trophy added
             }
-        }, 500); // 2 ticks per second
+        }, 500); // exactly 2 ticks per second, +1 per tick
 
         return () => clearInterval(interval);
     }, [show, score, playSound]);
