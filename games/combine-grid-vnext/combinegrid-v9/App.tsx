@@ -16,7 +16,8 @@ import GameHUD from '@/src/platform/hud/GameHUD';
 import { useToast } from '@/src/platform/ui/ToastContext';
 
 const DEFAULT_RECIPE = [12, 15, 24, 32, 56];
-const DEBUG_END = false; // set true to diagnose end-trigger failures
+const BUILD_STAMP    = "CG-STAMP-2";
+const DEBUG_END      = false; // set true to diagnose end-trigger failures
 
 interface CombineGridVNextGameProps {
   onBack?: () => void;
