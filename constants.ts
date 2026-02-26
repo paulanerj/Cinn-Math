@@ -13,6 +13,15 @@ export const DIFFICULTY_SETTINGS: Record<Difficulty, { initialTime: number; tile
   coconut: { initialTime: 45, tileRange: { min: 2, max: 12 }, timeTileProbability: { sum: 0.15, multiply: 0.25 }, targetRange: { sum: { min: 10, max: 40 }, multiply: { min: 20, max: 150 }}},
 };
 
+// ─── Diagnostics ─────────────────────────────────────────────────────────────
+// BUILD_STAMP: rendered on the grid every session so you can confirm which
+// deployed build you are looking at. Update this after each deploy/commit.
+export const BUILD_STAMP = '61a8487'; // short git hash of parent commit
+
+// DEBUG_END: when true, renders a live overlay of end-condition counters and
+// logs to console once when the game ends. Set false for production.
+export const DEBUG_END = false;
+
 // This makes the zzfx function available globally in the TypeScript environment.
 // Note: zzfx is no longer used for game sounds but we'll keep the declaration
 // in case it's used for UI feedback or other non-themed sounds in the future.

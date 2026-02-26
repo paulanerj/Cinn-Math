@@ -9,6 +9,7 @@ import { GameScreen, Theme, ThemeAssets, Coords, StartGameConfig } from './types
 import { THEMES } from './themes';
 import { gameReducer, initialState } from './state/gameState';
 import { useGameController } from './hooks/useGameController';
+import { BUILD_STAMP, DEBUG_END } from './constants';
 
 // Component Imports
 import { StartScreen } from './components/StartScreen';
@@ -59,7 +60,8 @@ export const App = () => {
 
     // --- GAME LOGIC / SIDE EFFECTS CONTROLLER ---
     // The controller hook manages all timers, animations, and game logic flows.
-    useGameController(state, dispatch, themeAssets.sounds, volume);
+    // Returns DebugEndInfo when DEBUG_END=true, null otherwise.
+    const cgDebug = useGameController(state, dispatch, themeAssets.sounds, volume);
 
     // --- PERSISTENCE EFFECTS ---
     useEffect(() => { localStorage.setItem('volume', String(volume)); }, [volume]);
@@ -138,21 +140,21 @@ export const App = () => {
             <ComboMeter count={comboCount} timerKey={comboTimerKey} />
             
             <div className="relative mt-4">
-                <div 
+                <div
                     className={`game-grid transition-transform duration-300 ${status === 'clearing' ? 'board-shake' : ''}`}
                     {...gridEventHandlers}
                 >
-                    {board.map((row, r) => 
+                    {board.map((row, r) =>
                         row.map((tile, c) => {
                             const isSelected = selectedCoords.some(coord => coord.row === r && coord.col === c);
                             const isClearing = clearingCoords.some(coord => coord.row === r && coord.col === c);
                             return (
-                                <Tile 
-                                    key={`${r}-${c}-${tile?.id || 'empty'}`} 
-                                    tileData={tile} row={r} col={c} isSelected={isSelected} isClearing={isClearing} 
-                                    isDropping={droppingTileIds.has(tile?.id || '')} 
-                                    isFallingOff={fallingOffTimeTileIds.has(tile?.id || '')} 
-                                    isIncorrect={isSelected && incorrectSelection !== null} 
+                                <Tile
+                                    key={`${r}-${c}-${tile?.id || 'empty'}`}
+                                    tileData={tile} row={r} col={c} isSelected={isSelected} isClearing={isClearing}
+                                    isDropping={droppingTileIds.has(tile?.id || '')}
+                                    isFallingOff={fallingOffTimeTileIds.has(tile?.id || '')}
+                                    isIncorrect={isSelected && incorrectSelection !== null}
                                     animationDelay={`${(r * 0.05 + c * 0.02)}s`}
                                     timeIconUrl={themeAssets.images['time-tile-icon']}
                                 />
@@ -160,7 +162,25 @@ export const App = () => {
                         })
                     )}
                 </div>
+                {/* BUILD_STAMP — always visible, never behind a debug flag */}
+                <span
+                    aria-hidden="true"
+                    style={{ position: 'absolute', bottom: 2, right: 4, fontSize: 8, lineHeight: 1, opacity: 0.45, color: '#888', pointerEvents: 'none', userSelect: 'none', fontFamily: 'monospace', letterSpacing: 0 }}
+                >{BUILD_STAMP}</span>
             </div>
+
+            {/* END DEBUG overlay — only mounts when DEBUG_END=true */}
+            {DEBUG_END && cgDebug && (
+                <div style={{ position: 'fixed', top: 8, left: 8, background: 'rgba(0,0,0,0.78)', color: '#39ff14', fontFamily: 'monospace', fontSize: 10, padding: '5px 8px', zIndex: 9999, lineHeight: 1.6, borderRadius: 4, pointerEvents: 'none' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: 2 }}>⚙ END DEBUG</div>
+                    <div>runs: {cgDebug.endCheckRuns}</div>
+                    <div>nonNull: {cgDebug.totalNonNullTiles}</div>
+                    <div>playable: {cgDebug.validPlayableCount}</div>
+                    <div>bombs: {cgDebug.bombCount}</div>
+                    <div>dead: {cgDebug.deadCount}</div>
+                    <div>{cgDebug.remainingKinds}</div>
+                </div>
+            )}
         </div>
     );
 };

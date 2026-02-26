@@ -5,15 +5,25 @@
  * @ai-note This is the "brain" of the application's interactivity. All side effects (setTimeout, setInterval) are managed here. When a request involves changing the *flow* of the game (e.g., "add a 1-second delay after a match"), this is the file to modify. It uses the `state` to know what to do and the `dispatch` function to trigger the next state change.
  */
 // FIX: Import React to provide namespace for React.Dispatch
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 // FIX: GameState and GameAction are exported from gameState.ts, not types.ts
 import { GameState, GameAction } from '../state/gameState';
 import { TileType, SoundHook } from '../types';
 import { useGameSounds } from './useGameSounds';
 import { useIsMounted } from './useIsMounted';
-import { DROP_ANIMATION_DURATION, CLEAR_ANIMATION_DURATION, FALL_OFF_ANIMATION_DURATION, COMBO_DURATION_MS, TIME_BONUS, GRID_SIZE } from '../constants';
+import { DROP_ANIMATION_DURATION, CLEAR_ANIMATION_DURATION, FALL_OFF_ANIMATION_DURATION, COMBO_DURATION_MS, TIME_BONUS, GRID_SIZE, DEBUG_END } from '../constants';
 import { findPathForTarget, applyGravity } from '../gameLogic/boardUtils';
 import { calculateSelectionValue } from '../gameLogic/matchLogic';
+
+// Shape returned when DEBUG_END is true; null otherwise.
+export type DebugEndInfo = {
+    endCheckRuns: number;
+    totalNonNullTiles: number;
+    validPlayableCount: number;
+    bombCount: number;
+    deadCount: number;
+    remainingKinds: string;
+};
 
 export const useGameController = (
     state: GameState,
@@ -25,6 +35,43 @@ export const useGameController = (
     const playSound = useGameSounds(soundMap, volume);
     const isMounted = useIsMounted();
     const comboTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // ── END-CONDITION DIAGNOSTICS ────────────────────────────────────────────
+    // Counts how many times the end-evaluation pipeline ran this session.
+    const endCheckRunsRef = useRef(0);
+    // Holds the latest snapshot for the debug overlay (alive even when DEBUG_END=false).
+    const [debugEndInfo, setDebugEndInfo] = useState<DebugEndInfo>({
+        endCheckRuns: 0,
+        totalNonNullTiles: 0,
+        validPlayableCount: 0,
+        bombCount: 0,
+        deadCount: 0,
+        remainingKinds: 'NUMBER:0 TIME:0',
+    });
+
+    /**
+     * evaluateEndCondition
+     * Called once at the very end of every resolve pipeline (after all gravity
+     * and bonus effects settle) — i.e. just before each FINISH_TURN dispatch.
+     * Does NOT change the actual end rule; that stays time-based for now.
+     * When DEBUG_END=true it updates the overlay state.
+     */
+    const evaluateEndCondition = useCallback((grid: (TileType | null)[][]) => {
+        endCheckRunsRef.current += 1;
+        const allTiles = grid.flat();
+        const numberTiles = allTiles.filter(t => t?.type === 'number');
+        const timeTiles  = allTiles.filter(t => t?.type === 'time');
+        const info: DebugEndInfo = {
+            endCheckRuns:      endCheckRunsRef.current,
+            totalNonNullTiles: allTiles.filter(t => t !== null).length,
+            validPlayableCount: numberTiles.length,
+            bombCount:  0, // no bomb tile type in this build
+            deadCount:  0, // no dead tile type in this build
+            remainingKinds: `NUMBER:${numberTiles.length} TIME:${timeTiles.length}`,
+        };
+        if (DEBUG_END) setDebugEndInfo(info);
+        return info;
+    }, []); // stable: only touches refs + stable setter
 
     // --- Game Timer ---
     useEffect(() => {
@@ -42,18 +89,35 @@ export const useGameController = (
         }
     }, [state.timeLeft, status, dispatch]);
 
+    // --- DEBUG: log end stats once when game-over fires (DEBUG_END only) ---
+    useEffect(() => {
+        if (!DEBUG_END || status !== 'gameOver') return;
+        const allTiles = state.board.flat();
+        const numberTiles = allTiles.filter(t => t?.type === 'number');
+        const timeTiles  = allTiles.filter(t => t?.type === 'time');
+        console.log('[CG END triggered]', {
+            endCheckRuns:      endCheckRunsRef.current,
+            totalNonNullTiles: allTiles.filter(t => t !== null).length,
+            validPlayableCount: numberTiles.length,
+            bombCount:  0,
+            deadCount:  0,
+            remainingKinds: `NUMBER:${numberTiles.length} TIME:${timeTiles.length}`,
+        });
+    }, [status, state.board]); // board in deps so snapshot is current at end
+
     // --- Initial Board Setup & Target Generation ---
     useEffect(() => {
         if (status === 'playing' && targetNumber === 0) {
             // After the initial drop animation, generate the first target
             setTimeout(() => {
                 if (!isMounted.current) return;
+                evaluateEndCondition(board); // baseline snapshot at game start
                 const newTarget = findPathForTarget(board, config.mode);
                 dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
                 dispatch({ type: 'RESET_ANIMATIONS' }); // Clear dropping state
             }, DROP_ANIMATION_DURATION);
         }
-    }, [status, targetNumber, board, config.mode, dispatch, isMounted]);
+    }, [status, targetNumber, board, config.mode, dispatch, isMounted, evaluateEndCondition]);
 
     // --- Selection Logic and Match Checking ---
     const checkMatch = useCallback(() => {
@@ -150,7 +214,7 @@ export const useGameController = (
                     playSound('bonus');
                     // 3a. Time bonus found, start fall-off animation
                     dispatch({ type: 'START_BONUS_FALL', payload: { timeTiles: timeBonuses, timeToAdd: TIME_BONUS * timeBonuses.size } });
-                    
+
                     // 4a. After fall-off, apply gravity again
                     setTimeout(() => {
                         if (!isMounted.current) return;
@@ -158,22 +222,24 @@ export const useGameController = (
                         const { nextBoard, droppedIds } = applyGravity(boardAfterBonus, config.mode, config.difficulty);
                         dispatch({ type: 'FINISH_BONUS_FALL', payload: { nextBoard, droppedIds } });
 
-                        // 5a. After final gravity, generate new target and finish turn
+                        // 5a. After final gravity, evaluate end condition, then finish turn
                         setTimeout(() => {
                              if (!isMounted.current) return;
+                             evaluateEndCondition(nextBoard); // ← end eval: bonus path
                              const newTarget = findPathForTarget(nextBoard, config.mode);
                              dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
                         }, DROP_ANIMATION_DURATION);
                     }, FALL_OFF_ANIMATION_DURATION);
 
                 } else {
-                    // 3b. No time bonus, just generate new target and finish turn
+                    // 3b. No time bonus: evaluate end condition, then finish turn
+                    evaluateEndCondition(state.board); // ← end eval: no-bonus path
                     const newTarget = findPathForTarget(state.board, config.mode);
                     dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
                 }
             }, DROP_ANIMATION_DURATION);
         }
-    }, [status, state.board, config, dispatch, isMounted, playSound]);
+    }, [status, state.board, config, dispatch, isMounted, playSound, evaluateEndCondition]);
 
     
     // --- Animation Cleanup Effect ---
@@ -215,4 +281,8 @@ export const useGameController = (
             return () => clearTimeout(timer);
         }
     }, [state.announcements, dispatch]);
+
+    // Return debug info so App.tsx can render the overlay.
+    // When DEBUG_END=false this returns null and the overlay is never rendered.
+    return DEBUG_END ? debugEndInfo : null;
 };
