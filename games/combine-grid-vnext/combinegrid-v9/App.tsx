@@ -259,10 +259,17 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
 
       if (event.type !== 'SNAPBACK' && event.type !== 'SPAWN_TILE') {
         const flat = next.flat().filter(Boolean) as Tile[];
-        const liveTileCount = flat.filter(t => t.kind === TileKind.NUMBER).length;
-        const bombCount = flat.filter(t => t.kind === TileKind.BOMB).length;
-        const deadTileCount = flat.filter(t => t.kind === TileKind.STONE).length;
-        if (liveTileCount === 1 && bombCount === 0 && deadTileCount === 0) {
+        const isValidPlayable = (t: Tile) =>
+          t.kind === TileKind.NUMBER || t.kind === TileKind.TROPHY;
+        const validCount = flat.filter(isValidPlayable).length;
+        const bombCount  = flat.filter(t => t.kind === TileKind.BOMB).length;
+
+        const DEBUG_END = false;
+        if (DEBUG_END) {
+          console.log('[END_CHECK]', { validCount, bombCount, kinds: flat.map(t => t.kind) });
+        }
+
+        if (validCount === 1 && bombCount === 0) {
           setShowNoMoves(true);
           setTimeout(startCountingSequence, FX_TIMING.DRY_DELAY_MS);
         }
