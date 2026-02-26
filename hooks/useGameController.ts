@@ -8,14 +8,16 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 // FIX: GameState and GameAction are exported from gameState.ts, not types.ts
 import { GameState, GameAction } from '../state/gameState';
-import { TileType, SoundHook } from '../types';
+import { TileType, SoundHook, Coords, GameMode } from '../types';
 import { useGameSounds } from './useGameSounds';
 import { useIsMounted } from './useIsMounted';
 import { DROP_ANIMATION_DURATION, CLEAR_ANIMATION_DURATION, FALL_OFF_ANIMATION_DURATION, COMBO_DURATION_MS, TIME_BONUS, GRID_SIZE, DEBUG_END } from '../constants';
 import { findPathForTarget, applyGravity } from '../gameLogic/boardUtils';
-import { calculateSelectionValue } from '../gameLogic/matchLogic';
+import { calculateSelectionValue, scanForMoves } from '../gameLogic/matchLogic';
 
-// Shape returned when DEBUG_END is true; null otherwise.
+// ─── Debug overlay shape ──────────────────────────────────────────────────────
+
+/** Returned by useGameController when DEBUG_END=true; null when DEBUG_END=false. */
 export type DebugEndInfo = {
     endCheckRuns: number;
     totalNonNullTiles: number;
@@ -23,7 +25,14 @@ export type DebugEndInfo = {
     bombCount: number;
     deadCount: number;
     remainingKinds: string;
+    /** Result of the last scanForMoves call */
+    hasMove: boolean;
+    moveReasons: { combine: boolean; bomb: boolean };
+    /** Example path if hasMove is true, for display in the overlay */
+    exampleMove: Coords[] | null;
 };
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export const useGameController = (
     state: GameState,
@@ -36,12 +45,12 @@ export const useGameController = (
     const isMounted = useIsMounted();
     const comboTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // ── END-CONDITION DIAGNOSTICS ────────────────────────────────────────────
-    // Counts how many times the end-evaluation pipeline ran this session.
+    // ── End-condition bookkeeping ─────────────────────────────────────────────
+    // How many times the resolve pipeline ran this session.
     const endCheckRunsRef = useRef(0);
-    // Guards against dispatching GAME_OVER more than once per game.
+    // One-shot guard: prevents GAME_OVER from being dispatched more than once per game.
     const endTriggeredRef = useRef(false);
-    // Holds the latest snapshot for the debug overlay (alive even when DEBUG_END=false).
+    // Latest snapshot for the debug overlay (populated every turn when DEBUG_END=true).
     const [debugEndInfo, setDebugEndInfo] = useState<DebugEndInfo>({
         endCheckRuns: 0,
         totalNonNullTiles: 0,
@@ -49,48 +58,65 @@ export const useGameController = (
         bombCount: 0,
         deadCount: 0,
         remainingKinds: 'NUMBER:0 TIME:0',
+        hasMove: true,          // default true; overlay shows real value after first scan
+        moveReasons: { combine: false, bomb: false },
+        exampleMove: null,
     });
 
     /**
      * evaluateEndCondition
-     * Called once at the very end of every resolve pipeline (after all gravity
-     * and bonus effects settle) — i.e. just before each FINISH_TURN dispatch.
      *
-     * END RULE: validPlayableCount === 1 && bombCount === 0
-     *   • validPlayableCount = tiles with type 'number' (the only playable kind
-     *     in this build; 'time' tiles are bonus tiles, not player-selectable)
-     *   • bombCount = 0 always in this build (no bomb tile type exists yet)
-     *   • deadCount = 0 always in this build (no stone/frozen tile type yet)
-     *   So the live trigger is simply: exactly 1 number tile remains on board.
+     * Called once after every board-resolve pipeline completes (after gravity
+     * and all bonus effects settle), passing the NEXT turn's target so that
+     * scanForMoves tests whether the player can actually achieve it.
      *
-     * When condition is met, dispatches GAME_OVER and sets endTriggeredRef so
-     * the caller skips FINISH_TURN.  Use endTriggeredRef externally to gate
-     * FINISH_TURN — call sites must check !endTriggeredRef.current after this.
-     * When DEBUG_END=true also updates the overlay state.
+     * END RULE: scanForMoves returns hasMove === false
+     *   • Checks all paths of 1–3 adjacent tiles (8-neighbour) that contain
+     *     at least one 'number' tile and whose calculateSelectionValue equals
+     *     nextTarget.  This reuses the same validation the player's own
+     *     selection goes through.
+     *   • bomb / dead tile actions are not present in this build, so
+     *     reasons.bomb is always false.
+     *
+     * When the condition fires, dispatches GAME_OVER and sets endTriggeredRef
+     * so the calling code skips the FINISH_TURN dispatch.
+     *
+     * @param grid       The settled board after gravity / bonus removal.
+     * @param nextTarget The target that findPathForTarget just generated for the
+     *                   next turn (passed in so we test the real upcoming target).
+     * @param gameMode   'sum' | 'multiply'.
      */
-    const evaluateEndCondition = useCallback((grid: (TileType | null)[][]) => {
+    const evaluateEndCondition = useCallback((
+        grid: (TileType | null)[][],
+        nextTarget: number,
+        gameMode: GameMode,
+    ) => {
         endCheckRunsRef.current += 1;
+
         const allTiles = grid.flat();
         const numberTiles = allTiles.filter(t => t?.type === 'number');
-        const timeTiles  = allTiles.filter(t => t?.type === 'time');
-        const validPlayableCount = numberTiles.length;
-        const bombCount = 0; // no bomb tile type in this build
-        const deadCount = 0; // no dead/stone tile type in this build
+        const timeTiles   = allTiles.filter(t => t?.type === 'time');
+
+        const scan = scanForMoves(grid, nextTarget, gameMode, GRID_SIZE);
+
         const info: DebugEndInfo = {
             endCheckRuns:      endCheckRunsRef.current,
             totalNonNullTiles: allTiles.filter(t => t !== null).length,
-            validPlayableCount,
-            bombCount,
-            deadCount,
+            validPlayableCount: numberTiles.length,
+            bombCount:  0, // no bomb tile type in this build
+            deadCount:  0, // no dead/stone tile type in this build
             remainingKinds: `NUMBER:${numberTiles.length} TIME:${timeTiles.length}`,
+            hasMove:     scan.hasMove,
+            moveReasons: scan.reasons,
+            exampleMove: scan.exampleMove,
         };
         if (DEBUG_END) setDebugEndInfo(info);
 
-        // ── 1-tile end rule ──────────────────────────────────────────────────
-        if (validPlayableCount === 1 && bombCount === 0 && !endTriggeredRef.current) {
+        // ── No-moves end rule ─────────────────────────────────────────────────
+        if (!scan.hasMove && !endTriggeredRef.current) {
             endTriggeredRef.current = true;
             dispatch({ type: 'GAME_OVER' });
-            if (DEBUG_END) console.log('[CG 1-tile end rule fired]', info);
+            if (DEBUG_END) console.log('[CG no-moves end rule fired]', info);
         }
 
         return info;
@@ -105,7 +131,7 @@ export const useGameController = (
         return () => clearInterval(interval);
     }, [status, dispatch]);
 
-    // --- Check for Game Over ---
+    // --- Check for Game Over (time-based) ---
     useEffect(() => {
         if (status === 'playing' && state.timeLeft <= 0) {
             dispatch({ type: 'GAME_OVER' });
@@ -115,32 +141,21 @@ export const useGameController = (
     // --- DEBUG: log end stats once when game-over fires (DEBUG_END only) ---
     useEffect(() => {
         if (!DEBUG_END || status !== 'gameOver') return;
-        const allTiles = state.board.flat();
-        const numberTiles = allTiles.filter(t => t?.type === 'number');
-        const timeTiles  = allTiles.filter(t => t?.type === 'time');
-        console.log('[CG END triggered]', {
-            endCheckRuns:      endCheckRunsRef.current,
-            totalNonNullTiles: allTiles.filter(t => t !== null).length,
-            validPlayableCount: numberTiles.length,
-            bombCount:  0,
-            deadCount:  0,
-            remainingKinds: `NUMBER:${numberTiles.length} TIME:${timeTiles.length}`,
-        });
-    }, [status, state.board]); // board in deps so snapshot is current at end
+        // debugEndInfo holds the last snapshot from evaluateEndCondition; log it.
+        console.log('[CG END triggered]', debugEndInfo);
+    }, [status, debugEndInfo]);
 
     // --- Initial Board Setup & Target Generation ---
     useEffect(() => {
         if (status === 'playing' && targetNumber === 0) {
-            // New game: reset the one-shot end-trigger guard so a fresh game
-            // can end correctly even after a previous game already triggered it.
+            // New game: reset the one-shot guard so this game can end correctly.
             endTriggeredRef.current = false;
-            // After the initial drop animation, generate the first target
+            // After the initial drop animation, generate the first target then validate.
             setTimeout(() => {
                 if (!isMounted.current) return;
-                evaluateEndCondition(board); // baseline snapshot at game start
-                // On a full fresh board the 1-tile rule won't fire, but guard anyway.
+                const newTarget = findPathForTarget(board, config.mode);
+                evaluateEndCondition(board, newTarget, config.mode);
                 if (!endTriggeredRef.current) {
-                    const newTarget = findPathForTarget(board, config.mode);
                     dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
                     dispatch({ type: 'RESET_ANIMATIONS' }); // Clear dropping state
                 }
@@ -151,7 +166,7 @@ export const useGameController = (
     // --- Selection Logic and Match Checking ---
     const checkMatch = useCallback(() => {
         if (selectedCoords.length === 0) return;
-        
+
         // A selection is only valid if it contains at least one number tile.
         const hasNumberTile = selectedCoords.some(c => board[c.row]?.[c.col]?.type === 'number');
         if (!hasNumberTile) {
@@ -164,14 +179,14 @@ export const useGameController = (
         }
 
         const currentVal = calculateSelectionValue(selectedCoords, board, config.mode);
-        
+
         // --- SUCCESS CONDITION (applies to both modes) ---
         if (currentVal === targetNumber) {
             const selectedNumberTiles = selectedCoords.map(({ row, col }) => board[row][col]).filter(t => t?.type === 'number');
             const points = selectedNumberTiles.reduce((sum, tile) => sum + (tile!.value as number), 0) * (1 + comboCount * 0.1);
             const comboSfx = `match_L${Math.min(comboCount, 3) + 1}` as SoundHook;
             playSound(soundMap[comboSfx] ? comboSfx : 'match_L1');
-            
+
             if (comboCount > 0 && (comboCount + 1) % 3 === 0) {
                 playSound('combo');
                 dispatch({ type: 'ADD_ANNOUNCEMENT', payload: { text: `${comboCount + 1}x COMBO!` }});
@@ -180,7 +195,7 @@ export const useGameController = (
             dispatch({ type: 'MATCH_SUCCESS', payload: { points: Math.ceil(points), coordsToClear: selectedCoords } });
             return; // Match found, no need to check for failure
         }
-        
+
         // --- FAILURE CONDITIONS (mode-specific) ---
         // For 'tap' mode, fail immediately if the value exceeds the target.
         if (config.selectionMode === 'tap' && currentVal > targetNumber) {
@@ -203,7 +218,7 @@ export const useGameController = (
         if (config.selectionMode === 'tap') {
             checkMatch();
         }
-        
+
         // For 'drag' mode, check only on pointer up to prevent premature failure.
         if (config.selectionMode === 'drag' && !state.isSelecting) {
             checkMatch();
@@ -251,24 +266,22 @@ export const useGameController = (
                         const { nextBoard, droppedIds } = applyGravity(boardAfterBonus, config.mode, config.difficulty);
                         dispatch({ type: 'FINISH_BONUS_FALL', payload: { nextBoard, droppedIds } });
 
-                        // 5a. After final gravity, evaluate end condition, then finish turn
+                        // 5a. After final gravity: generate next target, scan for moves, finish turn.
                         setTimeout(() => {
                              if (!isMounted.current) return;
-                             evaluateEndCondition(nextBoard); // ← end eval: bonus path
-                             // Skip FINISH_TURN if end rule already fired GAME_OVER.
+                             const newTarget = findPathForTarget(nextBoard, config.mode);
+                             evaluateEndCondition(nextBoard, newTarget, config.mode); // ← scan: bonus path
                              if (!endTriggeredRef.current) {
-                                 const newTarget = findPathForTarget(nextBoard, config.mode);
                                  dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
                              }
                         }, DROP_ANIMATION_DURATION);
                     }, FALL_OFF_ANIMATION_DURATION);
 
                 } else {
-                    // 3b. No time bonus: evaluate end condition, then finish turn
-                    evaluateEndCondition(state.board); // ← end eval: no-bonus path
-                    // Skip FINISH_TURN if end rule already fired GAME_OVER.
+                    // 3b. No time bonus: generate next target, scan for moves, finish turn.
+                    const newTarget = findPathForTarget(state.board, config.mode);
+                    evaluateEndCondition(state.board, newTarget, config.mode); // ← scan: no-bonus path
                     if (!endTriggeredRef.current) {
-                        const newTarget = findPathForTarget(state.board, config.mode);
                         dispatch({ type: 'FINISH_TURN', payload: { newTarget } });
                     }
                 }
@@ -276,7 +289,7 @@ export const useGameController = (
         }
     }, [status, state.board, config, dispatch, isMounted, playSound, evaluateEndCondition]);
 
-    
+
     // --- Animation Cleanup Effect ---
     useEffect(() => {
         if (state.scoreJustUpdated || state.isTargetMatched || state.incorrectSelection || state.droppingTileIds.size > 0) {

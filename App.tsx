@@ -179,6 +179,10 @@ export const App = () => {
                     <div>bombs: {cgDebug.bombCount}</div>
                     <div>dead: {cgDebug.deadCount}</div>
                     <div>{cgDebug.remainingKinds}</div>
+                    {cgDebug.hasMove
+                        ? <div>has_move: YES · {cgDebug.exampleMove?.map(c => `${c.row},${c.col}`).join('→') ?? '?'}</div>
+                        : <div>has_move: NO · c:{cgDebug.moveReasons.combine ? 'Y' : 'N'} b:{cgDebug.moveReasons.bomb ? 'Y' : 'N'}</div>
+                    }
                     {/* Force End: triggers the same GAME_OVER path as the real end rule.
                         Only shown while actively playing so it doesn't fire twice. */}
                     {status === 'playing' && (
