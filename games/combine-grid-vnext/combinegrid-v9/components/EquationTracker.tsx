@@ -47,7 +47,7 @@ const EquationVault = forwardRef<HTMLDivElement, EquationVaultProps>(({
       className={`
         relative
         flex items-center
-        rounded-full
+        rounded-3xl
         bg-black/85
         border border-white/10
         shadow-xl

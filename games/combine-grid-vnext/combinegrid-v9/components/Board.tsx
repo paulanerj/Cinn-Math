@@ -399,20 +399,26 @@ const Board = forwardRef<BoardHandle, BoardProps>(
           <ParticleLayer ref={particleRef} />
           {Array.from({ length: rows }).map((_, r) => Array.from({ length: cols }).map((_, c) => {
             const p = getPos(r, c);
-            return <div key={`${r}-${c}`} className="absolute bg-white/[0.03]" style={{ width: tileSize, height: tileSize, borderRadius: '6px', transform: `translate(${p.x}px, ${p.y}px)` }} />;
+            return <div key={`${r}-${c}`} className="absolute bg-white/[0.03]" style={{ width: tileSize, height: tileSize, borderRadius: '16px', transform: `translate(${p.x}px, ${p.y}px)` }} />;
           }))}
           {grid.flat().filter(Boolean).map(tile => {
             const p = getPos(tile!.r, tile!.c);
             const dragging = dragInfo?.id === tile!.id && dragInfo.isDragging;
-            return <Tile 
-              key={tile!.id} 
-              tile={{ ...tile!, isIgniting: tile!.id === ignitingBombId ? true : tile!.isIgniting }} 
-              tileSize={tileSize} 
-              x={p.x + (dragging ? dragInfo!.cx - dragInfo!.sx : 0)} 
-              y={p.y + (dragging ? dragInfo!.cy - dragInfo!.sy : 0)} 
-              isDragging={dragging} 
-              isZapTarget={zappingIds.has(tile!.id)} 
-              isHighlighted={highlightedTileId === tile!.id} 
+            const isFactorOfTarget =
+              tile!.kind === TileKind.NUMBER &&
+              tile!.val > 1 &&
+              tile!.val !== target &&
+              target % tile!.val === 0;
+            return <Tile
+              key={tile!.id}
+              tile={{ ...tile!, isIgniting: tile!.id === ignitingBombId ? true : tile!.isIgniting }}
+              tileSize={tileSize}
+              x={p.x + (dragging ? dragInfo!.cx - dragInfo!.sx : 0)}
+              y={p.y + (dragging ? dragInfo!.cy - dragInfo!.sy : 0)}
+              isDragging={dragging}
+              isZapTarget={zappingIds.has(tile!.id)}
+              isHighlighted={highlightedTileId === tile!.id}
+              isFactorOfTarget={isFactorOfTarget}
             />;
           })}
         </div>

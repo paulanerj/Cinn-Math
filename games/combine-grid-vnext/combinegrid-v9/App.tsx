@@ -339,7 +339,7 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
           {onBack && (
             <button
               onClick={onBack}
-              className="w-11 h-11 rounded-xl bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/70 hover:text-white active:scale-90 transition-all shadow-md shrink-0"
+              className="w-11 h-11 rounded-2xl bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/70 hover:text-white active:scale-90 transition-all shadow-md shrink-0"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="15 18 9 12 15 6" />
@@ -348,7 +348,7 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
           )}
           {/* Target tile with lifetime badge */}
           <div className="relative shrink-0">
-            <div className="w-11 h-11 rounded-xl bg-white flex items-center justify-center shadow-lg">
+            <div className="w-11 h-11 rounded-2xl bg-white flex items-center justify-center shadow-lg">
               <span className="text-black font-black text-xl leading-none">{targetValue}</span>
             </div>
             <div className="absolute -top-1.5 -right-1.5 bg-amber-500 text-white text-[10px] font-bold rounded-full border-2 border-[#1a1a1c] shadow-sm min-w-[20px] h-5 flex items-center justify-center px-1 leading-none">
@@ -403,7 +403,7 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
         </main>
 
         {/* ── Bottom Icon Bar ── */}
-        <div className="flex items-center justify-evenly px-4 pt-3 pb-6 bg-[#1a1a1c] border-t border-white/5 shrink-0 z-50">
+        <div className="flex items-center justify-evenly px-4 pt-3 pb-6 bg-[#111113] border-t border-white/[0.08] shrink-0 z-50" style={{ boxShadow: 'inset 0 4px 12px rgba(0,0,0,0.45)' }}>
           {/* Prev */}
           <IconBtn onClick={handlePrevTarget} title="Previous">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
