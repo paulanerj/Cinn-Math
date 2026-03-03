@@ -361,7 +361,7 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
           </div>
         </div>
 
-        <main className="flex-1 min-h-0 flex items-center justify-center p-2 sm:p-3 pt-4 sm:pt-6 relative overflow-hidden">
+        <main className="flex-1 min-h-0 flex items-center justify-center pt-4 pb-2 sm:pt-6 sm:pb-3 relative overflow-hidden">
           <Board
             ref={boardRef}
             grid={grid}

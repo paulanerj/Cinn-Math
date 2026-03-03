@@ -44,7 +44,8 @@ export interface BoardHandle {
  * LOCKED INVARIANTS (REV 3.3): Coordinate Offsets & Density Rules
  */
 const HUD_RESERVE_SPACE = 0;  // HUD lives in App.tsx top bar now
-const BORDER_WIDTH = 5; 
+const BORDER_WIDTH = 5;
+const SAFE_MARGIN = 5;        // px each side between board edge and viewport edge (mobile policy)
 const DRAG_START_THRESHOLD = 10;
 const BOMB_TAP_TIME_MS = 250;
 
@@ -120,12 +121,15 @@ const Board = forwardRef<BoardHandle, BoardProps>(
         if (!parent) return;
         const rect = parent.getBoundingClientRect();
         
-        // 🔒 USABLE DIMENSION CONTRACT: Applying growth multiplier only here.
-        const usableW = (rect.width - BORDER_WIDTH * 2 - 4) * GRID_SCALE;
+        // Width-first (Mobile Grid Dominance Policy):
+        // targetBoardW = viewport − SAFE_MARGIN×2, capped by container on larger screens.
+        const targetBoardW = Math.min(window.innerWidth - SAFE_MARGIN * 2, rect.width);
+        const maxTileW = Math.floor((targetBoardW - BORDER_WIDTH * 2 - (cols - 1) * gap - 2 * pad) / cols);
+
+        // Height: unchanged — parent height with GRID_SCALE multiplier.
         const usableH = (rect.height - BORDER_WIDTH * 2 - 4 - HUD_RESERVE_SPACE) * GRID_SCALE;
-        
-        if (usableW <= 0 || usableH <= 0) return;
-        const maxTileW = Math.floor((usableW - (cols - 1) * gap - 2 * pad) / cols);
+
+        if (maxTileW <= 0 || usableH <= 0) return;
         const maxTileH = Math.floor((usableH - (rows - 1) * gap - 2 * pad) / rows);
         
         setTileSize(Math.max(30, Math.min(maxTileW, maxTileH, 110)));
