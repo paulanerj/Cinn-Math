@@ -11,13 +11,22 @@ import SettingsModal from './components/SettingsModal';
 import FlyoutPill from './components/FlyoutPill';
 import { Trace } from './debug/trace';
 import { SoundEngine } from './services/SoundEngine';
-import GameControlsLayer from '@/src/platform/controls/GameControlsLayer';
-import GameHUD from '@/src/platform/hud/GameHUD';
+import EquationVault from './components/EquationTracker';
 import { useToast } from '@/src/platform/ui/ToastContext';
 
 const DEFAULT_RECIPE = [12, 15, 24, 32, 56];
 const BUILD_STAMP    = "CG-STAMP-2";
 const DEBUG_END      = false; // set true to diagnose end-trigger failures
+
+const IconBtn: React.FC<{ onClick: () => void; title: string; children: React.ReactNode }> = ({ onClick, title, children }) => (
+  <button
+    onClick={onClick}
+    title={title}
+    className="w-12 h-12 rounded-full bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/70 hover:text-white active:scale-90 transition-all shadow-[0_4px_8px_rgba(0,0,0,0.4)] shrink-0"
+  >
+    {children}
+  </button>
+);
 
 interface CombineGridVNextGameProps {
   onBack?: () => void;
@@ -324,19 +333,33 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
     <div className="flex flex-col items-center h-[100dvh] bg-[#141416] text-white overflow-hidden font-sans game-ui">
       <div className="w-full max-w-[520px] sm:max-w-[600px] lg:max-w-[760px] h-full flex flex-col relative border-x border-white/5 bg-[#1a1a1c] overflow-hidden">
 
-        <GameHUD
-          target={targetValue}
-          score={trophiesEarned}
-          mode="CombineGrid"
-          rightSlot={onBack ? (
+        {/* ── Compact Top Bar ── */}
+        <div className="flex items-center gap-2 px-3 h-[58px] shrink-0 bg-[#1a1a1c] border-b border-white/5 z-50">
+          {/* Back */}
+          {onBack && (
             <button
               onClick={onBack}
-              className="text-white/60 hover:text-white text-sm font-bold px-2 py-1 transition-colors"
+              className="w-11 h-11 rounded-xl bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/70 hover:text-white active:scale-90 transition-all shadow-md shrink-0"
             >
-              ‹ Back
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
             </button>
-          ) : undefined}
-        />
+          )}
+          {/* Target tile with lifetime badge */}
+          <div className="relative shrink-0">
+            <div className="w-11 h-11 rounded-xl bg-white flex items-center justify-center shadow-lg">
+              <span className="text-black font-black text-xl leading-none">{targetValue}</span>
+            </div>
+            <div className="absolute -top-1.5 -right-1.5 bg-amber-500 text-white text-[10px] font-bold rounded-full border-2 border-[#1a1a1c] shadow-sm min-w-[20px] h-5 flex items-center justify-center px-1 leading-none">
+              {trophiesLifetimeEarned}
+            </div>
+          </div>
+          {/* Equation pill — fills remaining space */}
+          <div ref={trackerRef} className="flex-1 min-w-0">
+            <EquationVault equation={lastEquation} isFlashing={isTrackerFlashing} />
+          </div>
+        </div>
 
         <main className="flex-1 min-h-0 flex items-center justify-center p-2 sm:p-3 pt-4 sm:pt-6 relative overflow-hidden">
           <Board
@@ -346,18 +369,12 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
             cols={cols}
             target={targetValue}
             practiceSet={practiceSet}
-            trophyCount={trophiesEarned}
-            lifetimeCount={trophiesLifetimeEarned}
-            lastEquation={lastEquation}
-            isTrackerFlashing={isTrackerFlashing}
             onStateChange={handleStateChange}
             onTrophyCreated={onTrophyCreated}
-            onOpenSettings={() => { SoundEngine.playTap(); setIsSettingsOpen(true); }}
             isDimmed={phase === Phase.COUNTING}
             highlightedTileId={countingTrophyId || undefined}
             pendingBombRefillCell={pendingBombRefillCell}
             onBombSpawned={() => setPendingBombRefillCell(null)}
-            trackerRef={trackerRef}
           />
 
           {showNoMoves && (
@@ -385,27 +402,29 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
           )}
         </main>
 
-        <GameControlsLayer
-          onUndo={handleUndo}
-          onReset={() => { SoundEngine.playTap(); initRound(); }}
-          centerSlot={
-            <div className="flex gap-2 items-center">
-              <button
-                onClick={handlePrevTarget}
-                className="bg-[#242426] px-3 sm:px-4 py-3.5 rounded-[16px] font-bold text-[11px] uppercase text-white/90 tracking-widest shadow-md hover:text-white active:scale-95 transition-all border border-white/5"
-              >
-                Prev
-              </button>
-
-              <button
-                onClick={handleNextTarget}
-                className="bg-[#242426] px-3 sm:px-4 py-3.5 rounded-[16px] font-bold text-[11px] uppercase text-white/90 tracking-widest shadow-md hover:text-white active:scale-95 transition-all border border-white/5"
-              >
-                Next
-              </button>
-            </div>
-          }
-        />
+        {/* ── Bottom Icon Bar ── */}
+        <div className="flex items-center justify-evenly px-4 pt-3 pb-6 bg-[#1a1a1c] border-t border-white/5 shrink-0 z-50">
+          {/* Prev */}
+          <IconBtn onClick={handlePrevTarget} title="Previous">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </IconBtn>
+          {/* Next */}
+          <IconBtn onClick={handleNextTarget} title="Next">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </IconBtn>
+          {/* Reset */}
+          <IconBtn onClick={() => { SoundEngine.playTap(); initRound(); }} title="Reset">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </IconBtn>
+          {/* Undo */}
+          <IconBtn onClick={handleUndo} title="Undo">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          </IconBtn>
+          {/* Settings */}
+          <IconBtn onClick={() => { SoundEngine.playTap(); setIsSettingsOpen(true); }} title="Settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </IconBtn>
+        </div>
         <div className="absolute bottom-0 right-0 text-[8px] text-white/20 pr-1 pb-0.5 z-[60000] pointer-events-none select-none">{BUILD_STAMP}</div>
       </div>
 

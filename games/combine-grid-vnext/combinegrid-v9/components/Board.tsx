@@ -14,7 +14,6 @@ import { COLORS } from '../constants';
 import { FX_TIMING } from '../fx/fxConfig';
 import { FxType } from '../fx/fxTypes';
 import Tile from './Tile';
-import EquationVault from './EquationTracker';
 import ParticleLayer, { ParticleHandle } from './ParticleLayer';
 import { Trace } from '../debug/trace';
 import { gridDigest } from '../debug/gridDigest';
@@ -29,18 +28,12 @@ interface BoardProps {
   cols: number;
   target: number;
   practiceSet: number[];
-  trophyCount: number;
-  lifetimeCount: number;
-  lastEquation: string;
-  isTrackerFlashing: boolean;
   onStateChange: (update: any, event: GameEvent) => void;
   onTrophyCreated?: (tile: TileData, startPos: { x: number; y: number }) => void;
-  onOpenSettings?: () => void;
   isDimmed?: boolean;
   highlightedTileId?: string;
   pendingBombRefillCell?: { r: number; c: number } | null;
   onBombSpawned?: () => void;
-  trackerRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 export interface BoardHandle {
@@ -50,7 +43,7 @@ export interface BoardHandle {
 /** 
  * LOCKED INVARIANTS (REV 3.3): Coordinate Offsets & Density Rules
  */
-const HUD_RESERVE_SPACE = 60; // 🔒 Grid Growth Rule
+const HUD_RESERVE_SPACE = 0;  // HUD lives in App.tsx top bar now
 const BORDER_WIDTH = 5; 
 const DRAG_START_THRESHOLD = 10;
 const BOMB_TAP_TIME_MS = 250;
@@ -70,18 +63,12 @@ const Board = forwardRef<BoardHandle, BoardProps>(
       cols,
       target,
       practiceSet,
-      trophyCount,
-      lifetimeCount,
-      lastEquation,
-      isTrackerFlashing,
       onStateChange,
       onTrophyCreated,
-      onOpenSettings,
       isDimmed,
       highlightedTileId,
       pendingBombRefillCell,
       onBombSpawned,
-      trackerRef
     },
     ref
   ) => {
@@ -264,13 +251,13 @@ const Board = forwardRef<BoardHandle, BoardProps>(
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
 
-      const pointerStartLocal = { 
-        x: sx - rect.left - BORDER_WIDTH, 
-        y: sy - rect.top - BORDER_WIDTH - HUD_RESERVE_SPACE 
+      const pointerStartLocal = {
+        x: sx - rect.left - BORDER_WIDTH,
+        y: sy - rect.top - BORDER_WIDTH
       };
-      const pointerEndLocal = { 
-        x: e.clientX - rect.left - BORDER_WIDTH, 
-        y: e.clientY - rect.top - BORDER_WIDTH - HUD_RESERVE_SPACE 
+      const pointerEndLocal = {
+        x: e.clientX - rect.left - BORDER_WIDTH,
+        y: e.clientY - rect.top - BORDER_WIDTH
       };
 
       const candidates: Candidate[] = [];
@@ -367,9 +354,9 @@ const Board = forwardRef<BoardHandle, BoardProps>(
 
         if (evaluation.event === 'MERGE_TROPHY') {
           const p = getPos(targetTile.r, targetTile.c);
-          const startPos = { 
-            x: rect.left + p.x + tileSize / 2, 
-            y: rect.top + p.y + HUD_RESERVE_SPACE + tileSize / 2 
+          const startPos = {
+            x: rect.left + p.x + tileSize / 2,
+            y: rect.top + p.y + tileSize / 2
           };
           const resultTile = { ...targetTile, ...evaluation } as TileData;
           triggerGoldenSequence(resultTile, startPos);
@@ -407,35 +394,8 @@ const Board = forwardRef<BoardHandle, BoardProps>(
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
       >
-        {/* HUD Area (Target Pill, Equation Tracker, Settings) */}
-        <div className="absolute top-0 left-0 w-full" style={{ height: HUD_RESERVE_SPACE }}>
-          {/* Target Pill */}
-          <div className="absolute bg-white text-black w-12 h-12 rounded-2xl shadow-2xl flex items-center justify-center border-b-[5px] border-zinc-300" style={{ left: pad, top: (HUD_RESERVE_SPACE - 48) / 2 }}>
-            <span className="text-xl font-black">{target}</span>
-            <div className="absolute -top-2 -right-2 bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold border border-white shadow-sm animate-bounce">{lifetimeCount}</div>
-          </div>
-          
-          {/* Equation Tracker (Relocated to center-left) */}
-          <div className="absolute" style={{ left: pad + 48 + 10, top: (HUD_RESERVE_SPACE - 48) / 2 }}>
-            <EquationVault 
-              ref={trackerRef}
-              equation={lastEquation} 
-              isFlashing={isTrackerFlashing} 
-            />
-          </div>
-
-          {/* Settings Control (RELOCATED TO TOP RIGHT per UI Contract) */}
-          <button 
-             onClick={onOpenSettings}
-             className="absolute w-12 h-12 rounded-2xl bg-[#3a322a] flex items-center justify-center text-white/80 shadow-lg active:scale-90 transition-transform border border-white/5"
-             style={{ right: pad, top: (HUD_RESERVE_SPACE - 48) / 2 }}
-          >
-             <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38(1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-          </button>
-        </div>
-
         {/* Playfield Area */}
-        <div className="absolute inset-0" style={{ top: HUD_RESERVE_SPACE }}>
+        <div className="absolute inset-0" style={{ top: 0 }}>
           <ParticleLayer ref={particleRef} />
           {Array.from({ length: rows }).map((_, r) => Array.from({ length: cols }).map((_, c) => {
             const p = getPos(r, c);

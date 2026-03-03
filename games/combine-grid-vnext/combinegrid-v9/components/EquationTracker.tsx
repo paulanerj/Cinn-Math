@@ -56,10 +56,10 @@ const EquationVault = forwardRef<HTMLDivElement, EquationVaultProps>(({
         md:min-h-[48px] min-h-[52px]
       `}
       style={{
-        padding: '6px 14px',         // 🔒 REV 3.2 Optimized Density
+        padding: '6px 14px',
         minWidth: 160,
-        maxWidth: 280,
-        justifyContent: 'flex-start', // 🔒 LEFT ANCHOR
+        width: '100%',
+        justifyContent: 'flex-start',
       }}
       data-ui="equation-vault"
     >
