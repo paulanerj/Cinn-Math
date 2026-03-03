@@ -8,6 +8,13 @@ const BASE_RADIUS_PX  = 16;                            // unified base tile radi
 const BOTTOM_SHADOW   = '0 3px 0 rgba(0,0,0,0.22)';   // standard depth
 const BOTTOM_SHADOW_S = '0 2px 0 rgba(0,0,0,0.15)';   // softer (light-bg tiles)
 
+// ── Factor glow tokens ─────────────────────────────────────────────────────────
+const FACTOR_WARM_OUTLINE       = 'rgba(249,115,22,0.55)';  // orange ring (factors)
+const FACTOR_WARM_GLOW          = 'rgba(249,115,22,0.25)';  // orange halo (factors)
+const FACTOR_ONE_OUTLINE        = 'rgba(56,189,248,0.55)';  // sky-blue ring (val===1)
+const FACTOR_ONE_GLOW           = 'rgba(56,189,248,0.20)';  // sky-blue halo (val===1)
+const FACTOR_REVEAL_DURATION_MS = 650;
+
 interface TileProps {
   tile: TileData & { isIgniting?: boolean };
   tileSize: number;
@@ -103,8 +110,10 @@ const Tile: React.FC<TileProps> = ({
   const isStone  = tile.kind === TileKind.STONE;
   const zapping  = isZapTarget || (tile as any).isZapping;
   const isBomb   = tile.kind === TileKind.BOMB;
-  // Factor glow only visible in resting state
-  const isFactor = isFactorOfTarget && !zapping && !isDragging;
+  // Factor glow only visible in resting state; zero is explicitly excluded
+  const isFactor     = isFactorOfTarget && tile.val !== 0 && !zapping && !isDragging;
+  const isOneFactor  = isFactor && tile.val === 1;
+  const isWarmFactor = isFactor && tile.val !== 1;
 
   const radius = lockedRadiusPx !== undefined ? `${lockedRadiusPx}px` : `${BASE_RADIUS_PX}px`;
 
@@ -113,7 +122,8 @@ const Tile: React.FC<TileProps> = ({
     zapping      ? '0 0 24px rgba(34,211,238,0.8), inset 0 0 12px rgba(34,211,238,0.3), 0 3px 0 rgba(0,0,0,0.2)'
     : isDragging ? '0 16px 32px rgba(0,0,0,0.5), 0 4px 0 rgba(0,0,0,0.3)'
     : isTrayOp   ? 'none'
-    : isFactor   ? '0 0 0 2px rgba(249,115,22,0.55), 0 0 10px rgba(249,115,22,0.25), 0 3px 0 rgba(0,0,0,0.22)'
+    : isOneFactor  ? `0 0 0 2px ${FACTOR_ONE_OUTLINE}, 0 0 10px ${FACTOR_ONE_GLOW}, 0 3px 0 rgba(0,0,0,0.22)`
+    : isWarmFactor ? `0 0 0 2px ${FACTOR_WARM_OUTLINE}, 0 0 10px ${FACTOR_WARM_GLOW}, 0 3px 0 rgba(0,0,0,0.22)`
     : baseShadow;
 
   return (
@@ -123,7 +133,7 @@ const Tile: React.FC<TileProps> = ({
       style={{ width: tileSize, height: tileSize, transform: `translate(${x}px, ${y}px) scale(${scale})` }}
     >
       <div
-        className={`w-full h-full flex flex-col items-center justify-center border relative overflow-hidden transition-all duration-300 ${zapping ? 'ring-4 ring-cyan-400 z-50' : ''} ${isHighlighted ? 'ring-4 ring-white' : ''} ${isStone ? 'opacity-90' : ''} ${isFactor ? 'factor-glow' : ''}`}
+        className={`w-full h-full flex flex-col items-center justify-center border relative overflow-hidden transition-all duration-300 ${zapping ? 'ring-4 ring-cyan-400 z-50' : ''} ${isHighlighted ? 'ring-4 ring-white' : ''} ${isStone ? 'opacity-90' : ''} ${isWarmFactor ? 'factor-glow' : ''} ${isOneFactor ? 'factor-glow-one' : ''}`}
         style={{
           background:  bg,
           color:       text,
@@ -195,10 +205,18 @@ const Tile: React.FC<TileProps> = ({
         @keyframes factor-reveal {
           0%   { box-shadow: 0 0 0 0   rgba(249,115,22,0),    0 3px 0 rgba(0,0,0,0.22); }
           45%  { box-shadow: 0 0 0 3px rgba(249,115,22,0.65), 0 0 14px rgba(249,115,22,0.35), 0 3px 0 rgba(0,0,0,0.22); }
-          100% { box-shadow: 0 0 0 2px rgba(249,115,22,0.55), 0 0 10px rgba(249,115,22,0.25), 0 3px 0 rgba(0,0,0,0.22); }
+          100% { box-shadow: 0 0 0 2px ${FACTOR_WARM_OUTLINE}, 0 0 10px ${FACTOR_WARM_GLOW}, 0 3px 0 rgba(0,0,0,0.22); }
         }
         .factor-glow {
-          animation: factor-reveal 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation: factor-reveal ${FACTOR_REVEAL_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes factor-reveal-one {
+          0%   { box-shadow: 0 0 0 0   rgba(56,189,248,0),    0 3px 0 rgba(0,0,0,0.22); }
+          45%  { box-shadow: 0 0 0 3px rgba(56,189,248,0.65), 0 0 14px rgba(56,189,248,0.30), 0 3px 0 rgba(0,0,0,0.22); }
+          100% { box-shadow: 0 0 0 2px ${FACTOR_ONE_OUTLINE}, 0 0 10px ${FACTOR_ONE_GLOW}, 0 3px 0 rgba(0,0,0,0.22); }
+        }
+        .factor-glow-one {
+          animation: factor-reveal-one ${FACTOR_REVEAL_DURATION_MS}ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
       `}</style>
     </div>

@@ -52,7 +52,7 @@ export default function GameHost({ game, onReturnToMenu }: Props) {
       {/* Active Game */}
       <div className="w-full h-full">
         <ErrorBoundary>
-          {game === "combine-grid" && <CombineGridGame />}
+          {game === "combine-grid" && <CombineGridGame onBack={onReturnToMenu} />}
           {game === "speed-grid" && <SpeedGridGame />}
         </ErrorBoundary>
       </div>

@@ -406,8 +406,7 @@ const Board = forwardRef<BoardHandle, BoardProps>(
             const dragging = dragInfo?.id === tile!.id && dragInfo.isDragging;
             const isFactorOfTarget =
               tile!.kind === TileKind.NUMBER &&
-              tile!.val > 1 &&
-              tile!.val !== target &&
+              tile!.val !== 0 &&
               target % tile!.val === 0;
             return <Tile
               key={tile!.id}
