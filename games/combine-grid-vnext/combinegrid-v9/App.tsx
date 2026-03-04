@@ -79,6 +79,13 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
 
   const boardRef = useRef<BoardHandle>(null);
   const trackerRef = useRef<HTMLDivElement>(null);
+  // ── Stale-closure / timer-safety refs ─────────────────────────────────────
+  const latestGridRef           = useRef<(Tile | null)[][]>([]);
+  const startCountingSequenceRef = useRef<() => Promise<void>>(async () => {});
+  const isMountedRef            = useRef(true);
+  const dryTimerRef             = useRef<number | null>(null);
+  const resultsTimerRef         = useRef<number | null>(null);
+  const flashTimerRef           = useRef<number | null>(null);
 
   const initRound = useCallback((config?: {
     rows?: number;
@@ -178,6 +185,20 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Always keep latestGridRef current so delayed callbacks read fresh grid
+  useEffect(() => { latestGridRef.current = grid; }, [grid]);
+
+  // Unmount cleanup: prevent setState-after-unmount and cancel pending timers
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (dryTimerRef.current)     clearTimeout(dryTimerRef.current);
+      if (resultsTimerRef.current) clearTimeout(resultsTimerRef.current);
+      if (flashTimerRef.current)   clearTimeout(flashTimerRef.current);
+    };
+  }, []);
+
   const handleNextTarget = () => { SoundEngine.playTap(); initRound({ indexShift: 1 }); };
   const handlePrevTarget = () => { SoundEngine.playTap(); initRound({ indexShift: -1 }); };
 
@@ -186,23 +207,32 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
     setShowNoMoves(false);
     SoundEngine.playTap();
     setPhase(Phase.COUNTING);
-    const trophies = grid.flat().filter(t => t?.kind === TileKind.TROPHY) as Tile[];
+    // Read from ref — not from closed-over grid — so we always see the latest grid state
+    // even if SPAWN_TILE events fired between the setTimeout scheduling and this execution.
+    const trophies = latestGridRef.current.flat().filter(t => t?.kind === TileKind.TROPHY) as Tile[];
     let count = 0;
 
     for (const t of trophies) {
       await new Promise(r => setTimeout(r, 500));
+      if (!isMountedRef.current) return;
       count++;
       setTrophiesEarned(count);
       setCountingTrophyId(t.id);
       SoundEngine.playCountStep(count - 1);
     }
 
+    if (!isMountedRef.current) return;
     setCountingTrophyId(null);
     SoundEngine.playResultsFanfare();
-    setTimeout(() => {
-      setPhase(Phase.RESULTS);
+    resultsTimerRef.current = window.setTimeout(() => {
+      if (isMountedRef.current) setPhase(Phase.RESULTS);
     }, 600);
-  }, [grid, phase]);
+  }, [phase]); // grid removed from deps — read via latestGridRef instead
+
+  // Keep ref current so the dry-delay setTimeout always invokes the latest closure
+  useEffect(() => {
+    startCountingSequenceRef.current = startCountingSequence;
+  }, [startCountingSequence]);
 
   const handleStateChange = useCallback((update: any, event: GameEvent) => {
     // 🎵 Sound Engine Event Routing
@@ -294,7 +324,11 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
 
         if (validCount === 1 && bombCount === 0) {
           setShowNoMoves(true);
-          setTimeout(startCountingSequence, FX_TIMING.DRY_DELAY_MS);
+          if (dryTimerRef.current) clearTimeout(dryTimerRef.current);
+          dryTimerRef.current = window.setTimeout(
+            () => startCountingSequenceRef.current(),
+            FX_TIMING.DRY_DELAY_MS
+          );
         }
       }
 
@@ -302,7 +336,7 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
     });
 
     setEvents(p => [...p, event, ...sideEffectEvents]);
-  }, [trophiesEarned, lastEquation, targetValue, startCountingSequence, trophiesLifetimeEarned, bombMilestonesTriggered, pendingBombRefillCell]);
+  }, [trophiesEarned, lastEquation, targetValue, trophiesLifetimeEarned, bombMilestonesTriggered, pendingBombRefillCell]);
 
   const onTrophyCreated = (tile: Tile, startPos: { x: number; y: number }) => {
     setFlyout({
@@ -319,7 +353,10 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
     }
     setFlyout(null);
     setIsTrackerFlashing(true);
-    setTimeout(() => setIsTrackerFlashing(false), FX_TIMING.HUD_FLASH_MS);
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = window.setTimeout(() => {
+      if (isMountedRef.current) setIsTrackerFlashing(false);
+    }, FX_TIMING.HUD_FLASH_MS);
   };
 
   const handleUndo = () => {

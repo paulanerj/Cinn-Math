@@ -103,9 +103,20 @@ const Board = forwardRef<BoardHandle, BoardProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const particleRef = useRef<ParticleHandle>(null);
     const spawnTimers = useRef<Map<string, number>>(new Map());
+    const bombTimerRef = useRef<number | null>(null);
+    const zapTimerRef  = useRef<number | null>(null);
 
     const bombRefillToken = useRef(pendingBombRefillCell);
     useEffect(() => { bombRefillToken.current = pendingBombRefillCell; }, [pendingBombRefillCell]);
+
+    // Unmount cleanup: cancel in-flight timers so no setState fires after unmount
+    useEffect(() => {
+      return () => {
+        if (bombTimerRef.current) clearTimeout(bombTimerRef.current);
+        if (zapTimerRef.current)  clearTimeout(zapTimerRef.current);
+        spawnTimers.current.forEach(t => clearTimeout(t));
+      };
+    }, []);
 
     useImperativeHandle(ref, () => ({
       getMetrics: () => ({
@@ -233,7 +244,7 @@ const Board = forwardRef<BoardHandle, BoardProps>(
           setIgnitingBombId(source.id);
           onStateChange((prev: any) => prev.map((row: any) => row.map((t: any) => (t?.id === source.id ? { ...t, isIgniting: true } : t))), { type: 'BOMB_IGNITE', description: 'Bomb ignite', matrix: '', actionId, timestamp: Date.now() });
           
-          window.setTimeout(() => {
+          bombTimerRef.current = window.setTimeout(() => {
             const { grid: nextGrid, explodedIds, trophiesCount } = GridEngine.explode(grid, source.r, source.c);
             explodedIds.forEach(id => {
               const t = grid.flat().find(x => x?.id === id);
@@ -347,7 +358,7 @@ const Board = forwardRef<BoardHandle, BoardProps>(
         setLocked(true);
         setZappingIds(new Set([source.id, targetTile.id]));
         onStateChange((prev: any) => prev.map((row: any) => row.map((t: any) => (t?.id === source.id || t?.id === targetTile.id ? { ...t!, val: 0, isZapping: true } : t))), { type: 'ZAP_TRIGGER', description: 'Zap!', matrix: '', actionId });
-        setTimeout(() => {
+        zapTimerRef.current = window.setTimeout(() => {
           // Trigger particle burst for the zapped tiles
           const sPos = getPos(source.r, source.c);
           const tPos = getPos(targetTile.r, targetTile.c);
