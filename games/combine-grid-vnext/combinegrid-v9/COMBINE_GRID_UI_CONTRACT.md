@@ -1,9 +1,9 @@
 # Combine Grid UI Contract
 
-**Version:** 1.2
+**Version:** 1.3
 **Status:** LOCKED
 **Established:** 2026-03-04
-**Last revised:** 2026-03-04 (Shared Grid Game UI System)
+**Last revised:** 2026-03-04 (Phase 3B — Mobile Vertical Layout Optimization)
 **Source of truth file:** `uiTokens.ts`
 **Shared system root:** `src/platform/ui/` (animTokens.ts, tileStyles.ts, HUDShell.tsx)
 
@@ -76,9 +76,26 @@ maxTileH = floor((usableH − (rows−1)×GAP − 2×PAD) / rows)
 ### App.tsx layout requirements
 
 - `<main>` must have **zero horizontal padding**.
-- Vertical padding is preserved: `pt-4 pb-2 sm:pt-6 sm:pb-3`.
+- Vertical padding: `pt-2 pb-1 sm:pt-3 sm:pb-1` (Phase 3B: tightened from `pt-4 pb-2 sm:pt-6 sm:pb-3` — visual breathing room only, no effect on tile size calculation).
 - `<main>` retains `overflow-hidden` (board fits within container; no clipping occurs by design).
 - The outer `max-w-[520px] sm:max-w-[600px] lg:max-w-[760px]` container enforces the desktop cap.
+
+### HUD chrome heights (Phase 3B)
+
+| Element | Height | Source |
+|---|---|---|
+| HUDTopBar | 54px | `HUDShell.tsx` `h-[54px]` (was 58px in Rev 1.2) |
+| HUDBottomBar | ~72px | `pt-2(8) + 48px icons + pb-4(16)` = 72px (was ~84px in Rev 1.2) |
+
+**Rev 1.3 change:** Total chrome reduced by 16px (58→54 top, 84→72 bottom). This reclaims 16px of vertical space for the grid area on all viewport sizes. Tile size formula and grid math are **unchanged**; the tileSize increases organically as the parent container grows.
+
+**Verified viewport fit (no scrolling required):**
+
+| Viewport height | Main area | maxTileH (6-row grid) | Controls visible |
+|---|---|---|---|
+| 390px (landscape mobile) | 264px | 39px | ✓ |
+| 430px | 304px | 46px | ✓ |
+| 768px (tablet portrait) | 642px | 104px (capped 110) | ✓ |
 
 ### Behavior by viewport
 

@@ -396,7 +396,10 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
           </div>
         </HUDTopBar>
 
-        <main className="flex-1 min-h-0 flex items-center justify-center pt-4 pb-2 sm:pt-6 sm:pb-3 relative overflow-hidden">
+        {/* Phase 3B: reduced vertical padding so grid fills more of the viewport.
+            pt-4→pt-2 pb-2→pb-1 saves visual dead space. Tile size unaffected
+            (determined by flex container height, not inner padding). */}
+        <main className="flex-1 min-h-0 flex items-center justify-center pt-2 pb-1 sm:pt-3 sm:pb-1 relative overflow-hidden">
           <Board
             ref={boardRef}
             grid={grid}

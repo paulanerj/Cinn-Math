@@ -53,10 +53,9 @@ const EquationVault = forwardRef<HTMLDivElement, EquationVaultProps>(({
         shadow-xl
         transition-all duration-300
         ${isFlashing ? 'animate-pulse bg-white/20' : ''}
-        md:min-h-[48px] min-h-[52px]
       `}
       style={{
-        padding: '6px 14px',
+        padding: '5px 14px',
         minWidth: 160,
         width: '100%',
         justifyContent: 'flex-start',
@@ -82,23 +81,23 @@ const EquationVault = forwardRef<HTMLDivElement, EquationVaultProps>(({
           width: '100%',
         }}
       >
-        {/* Lineage (dimmed instructional context) */}
+        {/* Lineage (dimmed instructional context) — Phase 3B: 16px → 28px (1.75×) */}
         {lhs && (
-          <span className="text-white/65 text-[16px]">
+          <span className="text-white/65 text-[28px]">
             {lhs}
           </span>
         )}
 
-        {/* Equals sign */}
+        {/* Equals sign — Phase 3B: 16px → 28px (1.75×) */}
         {rhs && (
-          <span className="text-white/80 text-[16px] mx-[6px]">
+          <span className="text-white/80 text-[28px] mx-[6px]">
             =
           </span>
         )}
 
-        {/* Result (high priority) */}
+        {/* Result (high priority) — Phase 3B: 19px → 33px (1.74×) */}
         {rhs && (
-          <span className="text-amber-400 font-extrabold text-[19px]">
+          <span className="text-amber-400 font-extrabold text-[33px]">
             {rhs}
           </span>
         )}
