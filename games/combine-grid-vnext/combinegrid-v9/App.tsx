@@ -20,26 +20,14 @@ import { SoundEngine } from './services/SoundEngine';
 import EquationVault from './components/EquationTracker';
 import { useToast } from '@/src/platform/ui/ToastContext';
 import { injectCombineGridStyles } from './combineGridStyles';
+import { HUDTopBar, HUDBottomBar, HUDIconBtn } from '@/src/platform/ui/HUDShell';
 
 // Inject CombineGrid tile animations once at module load (idempotent, no React lifecycle needed)
-// §5 SHARED_READY: HUD layout (top bar / bottom icon bar) is structurally portable to SpeedGrid.
-// Extract shared shell from App.tsx before merging. Keep game-state logic separate.
 injectCombineGridStyles();
 
 const DEFAULT_RECIPE = [12, 15, 24, 32, 56];
 const BUILD_STAMP    = "CG-STAMP-2";
 const DEBUG_END      = false; // set true to diagnose end-trigger failures
-
-// §4 HUD: IconBtn — stronger depth shadow, clearer active/hover feedback, sub-100ms transition
-const IconBtn: React.FC<{ onClick: () => void; title: string; children: React.ReactNode }> = ({ onClick, title, children }) => (
-  <button
-    onClick={onClick}
-    title={title}
-    className="w-12 h-12 rounded-full bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/60 hover:text-white hover:bg-[#333336] active:scale-90 active:bg-[#222224] transition-all duration-100 shadow-[0_4px_8px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.06)] shrink-0"
-  >
-    {children}
-  </button>
-);
 
 interface CombineGridVNextGameProps {
   onBack?: () => void;
@@ -383,18 +371,15 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
     <div className="flex flex-col items-center h-[100dvh] bg-[#141416] text-white overflow-hidden font-sans game-ui">
       <div className="w-full max-w-[520px] sm:max-w-[600px] lg:max-w-[760px] h-full flex flex-col relative border-x border-white/5 bg-[#1a1a1c] overflow-hidden">
 
-        {/* ── Compact Top Bar ── §4 HUD: wider gap, clearer separator, stronger target tile */}
-        <div className="flex items-center gap-3 px-4 h-[58px] shrink-0 bg-[#1a1a1c] border-b border-white/[0.08] z-50">
+        {/* ── Compact Top Bar ── uses shared HUDTopBar shell */}
+        <HUDTopBar>
           {/* Back */}
           {onBack && (
-            <button
-              onClick={onBack}
-              className="w-11 h-11 rounded-2xl bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/60 hover:text-white hover:bg-[#333336] active:scale-90 transition-all duration-100 shadow-[0_4px_8px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.06)] shrink-0"
-            >
+            <HUDIconBtn onClick={onBack} title="Back" className="rounded-2xl w-11 h-11">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="15 18 9 12 15 6" />
               </svg>
-            </button>
+            </HUDIconBtn>
           )}
           {/* Target tile with lifetime badge — stronger shadow for visual anchor */}
           <div className="relative shrink-0">
@@ -409,7 +394,7 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
           <div ref={trackerRef} className="flex-1 min-w-0">
             <EquationVault equation={lastEquation} isFlashing={isTrackerFlashing} />
           </div>
-        </div>
+        </HUDTopBar>
 
         <main className="flex-1 min-h-0 flex items-center justify-center pt-4 pb-2 sm:pt-6 sm:pb-3 relative overflow-hidden">
           <Board
@@ -452,29 +437,29 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
           )}
         </main>
 
-        {/* ── Bottom Icon Bar ── §4 HUD: stronger inset shadow, deeper background */}
-        <div className="flex items-center justify-evenly px-4 pt-3 pb-6 bg-[#111113] border-t border-white/[0.08] shrink-0 z-50" style={{ boxShadow: 'inset 0 4px 16px rgba(0,0,0,0.55)' }}>
+        {/* ── Bottom Icon Bar ── uses shared HUDBottomBar + HUDIconBtn */}
+        <HUDBottomBar>
           {/* Prev */}
-          <IconBtn onClick={handlePrevTarget} title="Previous">
+          <HUDIconBtn onClick={handlePrevTarget} title="Previous">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-          </IconBtn>
+          </HUDIconBtn>
           {/* Next */}
-          <IconBtn onClick={handleNextTarget} title="Next">
+          <HUDIconBtn onClick={handleNextTarget} title="Next">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-          </IconBtn>
+          </HUDIconBtn>
           {/* Reset */}
-          <IconBtn onClick={() => { SoundEngine.playTap(); initRound(); }} title="Reset">
+          <HUDIconBtn onClick={() => { SoundEngine.playTap(); initRound(); }} title="Reset">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-          </IconBtn>
+          </HUDIconBtn>
           {/* Undo */}
-          <IconBtn onClick={handleUndo} title="Undo">
+          <HUDIconBtn onClick={handleUndo} title="Undo">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-          </IconBtn>
+          </HUDIconBtn>
           {/* Settings */}
-          <IconBtn onClick={() => { SoundEngine.playTap(); setIsSettingsOpen(true); }} title="Settings">
+          <HUDIconBtn onClick={() => { SoundEngine.playTap(); setIsSettingsOpen(true); }} title="Settings">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          </IconBtn>
-        </div>
+          </HUDIconBtn>
+        </HUDBottomBar>
         <div className="absolute bottom-0 right-0 text-[8px] text-white/20 pr-1 pb-0.5 z-[60000] pointer-events-none select-none">{BUILD_STAMP}</div>
       </div>
 

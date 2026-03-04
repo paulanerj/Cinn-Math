@@ -16,11 +16,16 @@ import {
   FACTOR_ONE_OUTLINE,
   FACTOR_ONE_GLOW,
 } from '../uiTokens';
-
-// ── Shadow tokens (local to Tile — not parameterised across components) ────────
-// Phase 3 §1: Stronger depth shadow + top-shine for colorful tiles
-const BOTTOM_SHADOW   = '0 4px 0 rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.12)';  // standard depth + shine
-const BOTTOM_SHADOW_S = '0 3px 0 rgba(0,0,0,0.22)';   // softer (light-bg tiles)
+import {
+  TILE_BASE_SHADOW,
+  TILE_SOFT_SHADOW,
+  TILE_DRAG_SCALE,
+  TILE_DRAG_SHADOW,
+  TILE_ZAP_SHADOW,
+  TILE_SPECULAR_CLASSES,
+  tileTypography,
+} from '@/src/platform/ui/tileStyles';
+import { ANIM_FAST, ANIM_INTERACT } from '@/src/platform/ui/animTokens';
 
 interface TileProps {
   tile: TileData & { isIgniting?: boolean };
@@ -35,7 +40,7 @@ interface TileProps {
   isFactorOfTarget?: boolean;
 }
 
-// ── Bomb icon (unchanged) ─────────────────────────────────────────────────────
+// ── Bomb icon (CombineGrid-specific) ──────────────────────────────────────────
 const BombIcon: React.FC<{ size: number }> = ({ size }) => {
   const s = Math.max(22, Math.floor(size * 0.9));
   return (
@@ -50,6 +55,8 @@ const BombIcon: React.FC<{ size: number }> = ({ size }) => {
 };
 
 // ── Visual derivation (pure, no side-effects) ─────────────────────────────────
+// Uses TILE_BASE_SHADOW / TILE_SOFT_SHADOW from shared tileStyles.ts.
+// Stone baseShadow is CombineGrid-specific (inset texture shadow).
 function getVisuals(tile: TileData): {
   bg: string; text: string; textShadow: string; baseShadow: string;
 } {
@@ -59,14 +66,14 @@ function getVisuals(tile: TileData): {
       bg:         '#fffbf5',
       text:       '#000000',
       textShadow: 'none',
-      baseShadow: `inset 0 0 0 2px rgba(0,0,0,0.10), ${BOTTOM_SHADOW_S}`,
+      baseShadow: `inset 0 0 0 2px rgba(0,0,0,0.10), ${TILE_SOFT_SHADOW}`,
     };
     // One — pale sky blue, inner outline, no text shadow
     if (tile.val === 1) return {
       bg:         '#e0f2fe',
       text:       '#0369a1',
       textShadow: 'none',
-      baseShadow: `inset 0 0 0 1.5px rgba(3,105,161,0.20), ${BOTTOM_SHADOW_S}`,
+      baseShadow: `inset 0 0 0 1.5px rgba(3,105,161,0.20), ${TILE_SOFT_SHADOW}`,
     };
     // Colorful number tiles — value-indexed palette, subtle text shadow
     const idx = Math.min(COLORS.values.length - 1, Math.max(0, tile.val - 1));
@@ -74,20 +81,20 @@ function getVisuals(tile: TileData): {
       bg:         COLORS.values[idx],
       text:       '#ffffff',
       textShadow: '0 1px 2px rgba(0,0,0,0.25)',
-      baseShadow: BOTTOM_SHADOW,
+      baseShadow: TILE_BASE_SHADOW,
     };
   }
   if (tile.kind === TileKind.TROPHY) return {
     bg:         '#fdf8f5',
     text:       '#d97706',
     textShadow: 'none',
-    baseShadow: BOTTOM_SHADOW_S,
+    baseShadow: TILE_SOFT_SHADOW,
   };
   if (tile.kind === TileKind.BOMB) return {
     bg:         '#ef4444',
     text:       '#0b0b0c',
     textShadow: 'none',
-    baseShadow: BOTTOM_SHADOW,
+    baseShadow: TILE_BASE_SHADOW,
   };
   if (tile.kind === TileKind.STONE) return {
     bg:         'linear-gradient(145deg, #3f3f46, #71717a)',
@@ -112,8 +119,8 @@ const Tile: React.FC<TileProps> = ({
 }) => {
   const { bg, text, textShadow, baseShadow } = getVisuals(tile);
 
-  // Phase 3 §2: 1.18 gives a more pronounced lift for drag feedback (<150ms via transition)
-  const scale    = isDragging ? 1.18 : 1;
+  // Drag scale and transitions from shared tokens (TILE_DRAG_SCALE = 1.18, ANIM_INTERACT = 150ms)
+  const scale    = isDragging ? TILE_DRAG_SCALE : 1;
   const isTrophy = tile.kind === TileKind.TROPHY;
   const isStone  = tile.kind === TileKind.STONE;
   const zapping  = isZapTarget || (tile as any).isZapping;
@@ -126,11 +133,12 @@ const Tile: React.FC<TileProps> = ({
   const radius = lockedRadiusPx !== undefined ? `${lockedRadiusPx}px` : `${BASE_RADIUS_PX}px`;
 
   // ── Shadow composition ─────────────────────────────────────────────────────
-  // Phase 3 §2: stronger drag lift shadow. §3: 3px ring + 16px glow for factor contrast.
+  // Priority: zap > drag > trayOp > factor-one > factor-warm > base
+  // Shared tokens handle zap, drag. Factor ring/glow from uiTokens (CombineGrid-specific).
   const boxShadow =
-    zapping      ? '0 0 24px rgba(34,211,238,0.8), inset 0 0 12px rgba(34,211,238,0.3), 0 3px 0 rgba(0,0,0,0.2)'
-    : isDragging ? '0 20px 40px rgba(0,0,0,0.65), 0 6px 0 rgba(0,0,0,0.40), inset 0 1px 0 rgba(255,255,255,0.15)'
-    : isTrayOp   ? 'none'
+    zapping        ? TILE_ZAP_SHADOW
+    : isDragging   ? TILE_DRAG_SHADOW
+    : isTrayOp     ? 'none'
     : isOneFactor  ? `0 0 0 3px ${FACTOR_ONE_OUTLINE}, 0 0 16px ${FACTOR_ONE_GLOW}, 0 4px 0 rgba(0,0,0,0.32)`
     : isWarmFactor ? `0 0 0 3px ${FACTOR_WARM_OUTLINE}, 0 0 16px ${FACTOR_WARM_GLOW}, 0 4px 0 rgba(0,0,0,0.32)`
     : baseShadow;
@@ -138,21 +146,26 @@ const Tile: React.FC<TileProps> = ({
   return (
     <div
       data-tile-id={tile.id}
-      className={`absolute select-none touch-none transition-transform duration-150 ${isDragging ? 'z-[1000]' : 'z-10'} ${isHighlighted ? 'z-[100]' : ''}`}
-      style={{ width: tileSize, height: tileSize, transform: `translate(${x}px, ${y}px) scale(${scale})` }}
+      className={`absolute select-none touch-none transition-transform ${isDragging ? 'z-[1000]' : 'z-10'} ${isHighlighted ? 'z-[100]' : ''}`}
+      style={{
+        width: tileSize,
+        height: tileSize,
+        transform: `translate(${x}px, ${y}px) scale(${scale})`,
+        transitionDuration: `${ANIM_INTERACT}ms`,
+      }}
     >
       <div
-        className={`w-full h-full flex flex-col items-center justify-center border relative overflow-hidden transition-all duration-100 ${zapping ? 'ring-4 ring-cyan-400 z-50' : ''} ${isHighlighted ? 'ring-4 ring-white' : ''} ${isStone ? 'opacity-90' : ''} ${isWarmFactor ? 'factor-glow' : ''} ${isOneFactor ? 'factor-glow-one' : ''}`}
+        className={`w-full h-full flex flex-col items-center justify-center border relative overflow-hidden transition-all ${zapping ? 'ring-4 ring-cyan-400 z-50' : ''} ${isHighlighted ? 'ring-4 ring-white' : ''} ${isStone ? 'opacity-90' : ''} ${isWarmFactor ? 'factor-glow' : ''} ${isOneFactor ? 'factor-glow-one' : ''}`}
         style={{
-          background:  bg,
-          color:       text,
-          borderRadius: radius,
-          fontSize:    tileSize * 0.45,
-          fontWeight:  900,
+          background:         bg,
+          color:              text,
+          borderRadius:       radius,
+          ...tileTypography(tileSize),
           boxShadow,
-          animation:   zapping ? 'zap-jitter 0.08s infinite, zap-flash 0.3s infinite' : undefined,
-          borderWidth: isStone ? '2px' : '1px',
-          borderColor: isStone ? '#18181b' : 'rgba(0,0,0,0.12)',
+          animation:          zapping ? 'zap-jitter 0.08s infinite, zap-flash 0.3s infinite' : undefined,
+          borderWidth:        isStone ? '2px' : '1px',
+          borderColor:        isStone ? '#18181b' : 'rgba(0,0,0,0.12)',
+          transitionDuration: `${ANIM_FAST}ms`,
         }}
       >
         {isTrophy && <span className="absolute top-1 text-[10px] text-amber-500/50">★</span>}
@@ -180,8 +193,8 @@ const Tile: React.FC<TileProps> = ({
           </span>
         )}
 
-        {/* Specular highlight overlay */}
-        <div className="absolute inset-0 pointer-events-none bg-gradient-to-br from-white/20 to-transparent" />
+        {/* Specular highlight overlay — shared TILE_SPECULAR_CLASSES from tileStyles.ts */}
+        <div className={TILE_SPECULAR_CLASSES} />
 
         {isBomb && tile.isIgniting && (
           <div className="absolute inset-0 pointer-events-none" style={{

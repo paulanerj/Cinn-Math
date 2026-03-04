@@ -1,10 +1,11 @@
 # Combine Grid UI Contract
 
-**Version:** 1.1
+**Version:** 1.2
 **Status:** LOCKED
 **Established:** 2026-03-04
-**Last revised:** 2026-03-04 (Phase 3 — UI System Improvement Pass)
+**Last revised:** 2026-03-04 (Shared Grid Game UI System)
 **Source of truth file:** `uiTokens.ts`
+**Shared system root:** `src/platform/ui/` (animTokens.ts, tileStyles.ts, HUDShell.tsx)
 
 ---
 
@@ -19,6 +20,11 @@ The following files are under contract:
 - `components/Board.tsx`
 - `components/Tile.tsx`
 - `uiTokens.ts` (this document's source of truth)
+
+The following **shared platform files** are used by CombineGrid and may not be modified to add game-specific logic:
+- `src/platform/ui/animTokens.ts` — timing tokens only; no game logic
+- `src/platform/ui/tileStyles.ts` — lighting model only; no factor/bomb/trophy logic
+- `src/platform/ui/HUDShell.tsx` — structural layout only; no game state
 
 ---
 
@@ -156,9 +162,11 @@ const isFactor = isFactorOfTarget && tile.val !== 0 && !zapping && !isDragging;
 | `FACTOR_WARM_GLOW` | `rgba(249,115,22,0.40)` | Orange halo, settled state |
 | `FACTOR_ONE_OUTLINE` | `rgba(56,189,248,0.75)` | Sky-blue ring, settled state |
 | `FACTOR_ONE_GLOW` | `rgba(56,189,248,0.35)` | Sky-blue halo, settled state |
-| `FACTOR_REVEAL_DURATION_MS` | `650` | ms, one-shot animation duration |
+| `FACTOR_REVEAL_DURATION_MS` | `ANIM_REVEAL` (650ms) | ms, one-shot animation duration |
 
 **Rev 1.1 change:** opacity raised (0.55→0.75 outline, 0.20–0.25→0.35–0.40 halo) for better readability on small screens. Warm/cool distinction preserved.
+
+**Rev 1.2 change:** `FACTOR_REVEAL_DURATION_MS` now derives from `ANIM_REVEAL` in `src/platform/ui/animTokens.ts` instead of being a hardcoded literal. The value (650ms) is unchanged.
 
 ### Animation rules
 
@@ -186,14 +194,19 @@ const isFactor = isFactorOfTarget && tile.val !== 0 && !zapping && !isDragging;
 - Drag shadow: stronger lift (`0 20px 40px` vs `0 16px 32px`) with inset shine
 - Factor ring: 2px → 3px; glow radius: 10px → 16px
 
-### Base shadow tokens (local to Tile.tsx — not in uiTokens.ts)
+### Base shadow tokens (shared — from `src/platform/ui/tileStyles.ts`)
 
-| Constant | Value | Used by |
+**Rev 1.2:** These are no longer local constants in Tile.tsx. They are imported from the shared `tileStyles.ts` module under `src/platform/ui/`. The values are unchanged from Rev 1.1.
+
+| Export name | Value | Used by |
 |---|---|---|
-| `BOTTOM_SHADOW` | `0 4px 0 rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.12)` | Colorful number tiles, bomb |
-| `BOTTOM_SHADOW_S` | `0 3px 0 rgba(0,0,0,0.22)` | Zero, one, trophy |
+| `TILE_BASE_SHADOW` | `0 4px 0 rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.12)` | Colorful number tiles, bomb |
+| `TILE_SOFT_SHADOW` | `0 3px 0 rgba(0,0,0,0.22)` | Zero, one, trophy |
+| `TILE_DRAG_SHADOW` | `0 20px 40px rgba(0,0,0,0.65), 0 6px 0 rgba(0,0,0,0.40), inset 0 1px 0 rgba(255,255,255,0.15)` | Drag state |
+| `TILE_ZAP_SHADOW` | `0 0 24px rgba(34,211,238,0.8), inset 0 0 12px rgba(34,211,238,0.3), 0 3px 0 rgba(0,0,0,0.2)` | Zap state |
+| `TILE_DRAG_SCALE` | `1.18` | Scale during drag |
 
-**Rev 1.1 changes:** `BOTTOM_SHADOW` gains top-shine inset + deeper bottom shadow. `BOTTOM_SHADOW_S` slightly stronger.
+**Rev 1.1 changes:** `TILE_BASE_SHADOW` gains top-shine inset + deeper bottom shadow. `TILE_SOFT_SHADOW` slightly stronger.
 
 ### Rules
 
@@ -232,9 +245,20 @@ const isFactor = isFactorOfTarget && tile.val !== 0 && !zapping && !isDragging;
 
 To change any value or rule in this contract:
 
-1. Update the relevant constant in `uiTokens.ts`.
+1. Update the relevant constant in `uiTokens.ts` (CombineGrid-specific) or the shared module (`animTokens.ts`, `tileStyles.ts`, `HUDShell.tsx`) as appropriate.
 2. Update the affected component(s) to use the new value.
 3. Update this document to reflect the new value and rationale.
 4. All three changes must occur in the same commit.
 
 **No partial updates permitted.** Contract drift (code and document disagree) is a defect.
+
+### Shared module change rule
+
+If a value in `src/platform/ui/animTokens.ts` or `tileStyles.ts` changes, **both** this document and any SpeedGrid documentation must be updated. Shared module values cascade to all games; treat changes as breaking.
+
+### SpeedGrid integration checklist (when ready)
+
+- [ ] Import `TILE_BASE_SHADOW`, `TILE_SOFT_SHADOW`, `TILE_DRAG_SHADOW`, `TILE_ZAP_SHADOW`, `TILE_DRAG_SCALE`, `tileTypography`, `TILE_SPECULAR_CLASSES` from `tileStyles.ts` in SpeedGrid tile renderer
+- [ ] Wrap SpeedGrid header with `<HUDTopBar>` and controls with `<HUDBottomBar>`
+- [ ] Replace SpeedGrid icon buttons with `<HUDIconBtn>`
+- [ ] Import `ANIM_FAST`, `ANIM_INTERACT`, `ANIM_REVEAL` from `animTokens.ts` for all SpeedGrid animation durations
