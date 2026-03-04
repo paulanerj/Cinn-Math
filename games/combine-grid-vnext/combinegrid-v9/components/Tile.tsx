@@ -1,19 +1,26 @@
 
+/* ⚠ UI CONTRACT PROTECTED
+ This file participates in the Combine Grid Layout Contract.
+ Do not modify layout math, factor rules, tile geometry, or sizing constants
+ without updating COMBINE_GRID_UI_CONTRACT.md.
+ This system is intentionally deterministic. No visual changes without explicit contract revision.
+*/
+
 import React from 'react';
 import { Tile as TileData, TileKind } from '../types';
 import { COLORS } from '../constants';
+import {
+  BASE_RADIUS_PX,
+  FACTOR_WARM_OUTLINE,
+  FACTOR_WARM_GLOW,
+  FACTOR_ONE_OUTLINE,
+  FACTOR_ONE_GLOW,
+  FACTOR_REVEAL_DURATION_MS,
+} from '../uiTokens';
 
-// ── Design tokens ─────────────────────────────────────────────────────────────
-const BASE_RADIUS_PX  = 16;                            // unified base tile radius
+// ── Shadow tokens (local to Tile — not parameterised across components) ────────
 const BOTTOM_SHADOW   = '0 3px 0 rgba(0,0,0,0.22)';   // standard depth
 const BOTTOM_SHADOW_S = '0 2px 0 rgba(0,0,0,0.15)';   // softer (light-bg tiles)
-
-// ── Factor glow tokens ─────────────────────────────────────────────────────────
-const FACTOR_WARM_OUTLINE       = 'rgba(249,115,22,0.55)';  // orange ring (factors)
-const FACTOR_WARM_GLOW          = 'rgba(249,115,22,0.25)';  // orange halo (factors)
-const FACTOR_ONE_OUTLINE        = 'rgba(56,189,248,0.55)';  // sky-blue ring (val===1)
-const FACTOR_ONE_GLOW           = 'rgba(56,189,248,0.20)';  // sky-blue halo (val===1)
-const FACTOR_REVEAL_DURATION_MS = 650;
 
 interface TileProps {
   tile: TileData & { isIgniting?: boolean };

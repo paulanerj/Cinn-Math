@@ -1,4 +1,10 @@
 
+/* ⚠ UI CONTRACT PROTECTED
+ This file participates in the Combine Grid Layout Contract.
+ Do not modify layout math, factor rules, tile geometry, or sizing constants
+ without updating COMBINE_GRID_UI_CONTRACT.md.
+ This system is intentionally deterministic. No visual changes without explicit contract revision.
+*/
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Tile, GameEvent, Phase, TileKind, TargetSource } from './types';

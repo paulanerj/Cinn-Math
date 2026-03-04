@@ -1,4 +1,11 @@
 
+/* ⚠ UI CONTRACT PROTECTED
+ This file participates in the Combine Grid Layout Contract.
+ Do not modify layout math, factor rules, tile geometry, or sizing constants
+ without updating COMBINE_GRID_UI_CONTRACT.md.
+ This system is intentionally deterministic. No visual changes without explicit contract revision.
+*/
+
 import React, {
   useState,
   useRef,
@@ -21,6 +28,7 @@ import { resolveAdjacentTarget, Candidate } from '../services/SwapResolver';
 import { Engine } from '../services/Engine';
 import { getRefillTileForCell } from '../services/mathpopSpawn';
 import { SoundEngine } from '../services/SoundEngine';
+import { BORDER_WIDTH, SAFE_MARGIN, GAP, PAD } from '../uiTokens';
 
 interface BoardProps {
   grid: (TileData | null)[][];
@@ -44,8 +52,7 @@ export interface BoardHandle {
  * LOCKED INVARIANTS (REV 3.3): Coordinate Offsets & Density Rules
  */
 const HUD_RESERVE_SPACE = 0;  // HUD lives in App.tsx top bar now
-const BORDER_WIDTH = 5;
-const SAFE_MARGIN = 5;        // px each side between board edge and viewport edge (mobile policy)
+// BORDER_WIDTH, SAFE_MARGIN imported from uiTokens
 const DRAG_START_THRESHOLD = 10;
 const BOMB_TAP_TIME_MS = 250;
 
@@ -74,8 +81,8 @@ const Board = forwardRef<BoardHandle, BoardProps>(
     ref
   ) => {
     const [tileSize, setTileSize] = useState(72);
-    const gap = 2;           // 🔒 REV 3.3 Density
-    const pad = 6;           // 🔒 REV 3.3 Density
+    const gap = GAP;         // 🔒 REV 3.3 Density (source: uiTokens)
+    const pad = PAD;         // 🔒 REV 3.3 Density (source: uiTokens)
 
     const [dragInfo, setDragInfo] = useState<{
       id: string;
