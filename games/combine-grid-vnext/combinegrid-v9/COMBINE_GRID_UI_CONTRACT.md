@@ -1,8 +1,9 @@
 # Combine Grid UI Contract
 
-**Version:** 1.0
+**Version:** 1.1
 **Status:** LOCKED
 **Established:** 2026-03-04
+**Last revised:** 2026-03-04 (Phase 3 — UI System Improvement Pass)
 **Source of truth file:** `uiTokens.ts`
 
 ---
@@ -151,11 +152,13 @@ const isFactor = isFactorOfTarget && tile.val !== 0 && !zapping && !isDragging;
 
 | Token | Value | Role |
 |---|---|---|
-| `FACTOR_WARM_OUTLINE` | `rgba(249,115,22,0.55)` | Orange ring, settled state |
-| `FACTOR_WARM_GLOW` | `rgba(249,115,22,0.25)` | Orange halo, settled state |
-| `FACTOR_ONE_OUTLINE` | `rgba(56,189,248,0.55)` | Sky-blue ring, settled state |
-| `FACTOR_ONE_GLOW` | `rgba(56,189,248,0.20)` | Sky-blue halo, settled state |
+| `FACTOR_WARM_OUTLINE` | `rgba(249,115,22,0.75)` | Orange ring, settled state |
+| `FACTOR_WARM_GLOW` | `rgba(249,115,22,0.40)` | Orange halo, settled state |
+| `FACTOR_ONE_OUTLINE` | `rgba(56,189,248,0.75)` | Sky-blue ring, settled state |
+| `FACTOR_ONE_GLOW` | `rgba(56,189,248,0.35)` | Sky-blue halo, settled state |
 | `FACTOR_REVEAL_DURATION_MS` | `650` | ms, one-shot animation duration |
+
+**Rev 1.1 change:** opacity raised (0.55→0.75 outline, 0.20–0.25→0.35–0.40 halo) for better readability on small screens. Warm/cool distinction preserved.
 
 ### Animation rules
 
@@ -171,20 +174,26 @@ const isFactor = isFactorOfTarget && tile.val !== 0 && !zapping && !isDragging;
 ### Shadow override priority (strict, top = highest)
 
 ```
-1. Zap:         0 0 24px rgba(34,211,238,0.8), inset 0 0 12px rgba(34,211,238,0.3), ...
-2. Drag:        0 16px 32px rgba(0,0,0,0.5), 0 4px 0 rgba(0,0,0,0.3)
+1. Zap:         0 0 24px rgba(34,211,238,0.8), inset 0 0 12px rgba(34,211,238,0.3), 0 3px 0 rgba(0,0,0,0.2)
+2. Drag:        0 20px 40px rgba(0,0,0,0.65), 0 6px 0 rgba(0,0,0,0.40), inset 0 1px 0 rgba(255,255,255,0.15)
 3. TrayOp:      none
-4. isOneFactor: 0 0 0 2px FACTOR_ONE_OUTLINE, 0 0 10px FACTOR_ONE_GLOW, BOTTOM_SHADOW
-5. isWarmFactor:0 0 0 2px FACTOR_WARM_OUTLINE, 0 0 10px FACTOR_WARM_GLOW, BOTTOM_SHADOW
+4. isOneFactor: 0 0 0 3px FACTOR_ONE_OUTLINE, 0 0 16px FACTOR_ONE_GLOW, 0 4px 0 rgba(0,0,0,0.32)
+5. isWarmFactor:0 0 0 3px FACTOR_WARM_OUTLINE, 0 0 16px FACTOR_WARM_GLOW, 0 4px 0 rgba(0,0,0,0.32)
 6. baseShadow:  tile-type default (see table below)
 ```
+
+**Rev 1.1 changes:**
+- Drag shadow: stronger lift (`0 20px 40px` vs `0 16px 32px`) with inset shine
+- Factor ring: 2px → 3px; glow radius: 10px → 16px
 
 ### Base shadow tokens (local to Tile.tsx — not in uiTokens.ts)
 
 | Constant | Value | Used by |
 |---|---|---|
-| `BOTTOM_SHADOW` | `0 3px 0 rgba(0,0,0,0.22)` | Colorful number tiles, bomb |
-| `BOTTOM_SHADOW_S` | `0 2px 0 rgba(0,0,0,0.15)` | Zero, one, trophy |
+| `BOTTOM_SHADOW` | `0 4px 0 rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.12)` | Colorful number tiles, bomb |
+| `BOTTOM_SHADOW_S` | `0 3px 0 rgba(0,0,0,0.22)` | Zero, one, trophy |
+
+**Rev 1.1 changes:** `BOTTOM_SHADOW` gains top-shine inset + deeper bottom shadow. `BOTTOM_SHADOW_S` slightly stronger.
 
 ### Rules
 

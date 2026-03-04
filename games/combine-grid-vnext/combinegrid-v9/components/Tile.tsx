@@ -18,8 +18,9 @@ import {
 } from '../uiTokens';
 
 // ── Shadow tokens (local to Tile — not parameterised across components) ────────
-const BOTTOM_SHADOW   = '0 3px 0 rgba(0,0,0,0.22)';   // standard depth
-const BOTTOM_SHADOW_S = '0 2px 0 rgba(0,0,0,0.15)';   // softer (light-bg tiles)
+// Phase 3 §1: Stronger depth shadow + top-shine for colorful tiles
+const BOTTOM_SHADOW   = '0 4px 0 rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.12)';  // standard depth + shine
+const BOTTOM_SHADOW_S = '0 3px 0 rgba(0,0,0,0.22)';   // softer (light-bg tiles)
 
 interface TileProps {
   tile: TileData & { isIgniting?: boolean };
@@ -111,7 +112,8 @@ const Tile: React.FC<TileProps> = ({
 }) => {
   const { bg, text, textShadow, baseShadow } = getVisuals(tile);
 
-  const scale    = isDragging ? 1.15 : 1;
+  // Phase 3 §2: 1.18 gives a more pronounced lift for drag feedback (<150ms via transition)
+  const scale    = isDragging ? 1.18 : 1;
   const isTrophy = tile.kind === TileKind.TROPHY;
   const isStone  = tile.kind === TileKind.STONE;
   const zapping  = isZapTarget || (tile as any).isZapping;
@@ -124,12 +126,13 @@ const Tile: React.FC<TileProps> = ({
   const radius = lockedRadiusPx !== undefined ? `${lockedRadiusPx}px` : `${BASE_RADIUS_PX}px`;
 
   // ── Shadow composition ─────────────────────────────────────────────────────
+  // Phase 3 §2: stronger drag lift shadow. §3: 3px ring + 16px glow for factor contrast.
   const boxShadow =
     zapping      ? '0 0 24px rgba(34,211,238,0.8), inset 0 0 12px rgba(34,211,238,0.3), 0 3px 0 rgba(0,0,0,0.2)'
-    : isDragging ? '0 16px 32px rgba(0,0,0,0.5), 0 4px 0 rgba(0,0,0,0.3)'
+    : isDragging ? '0 20px 40px rgba(0,0,0,0.65), 0 6px 0 rgba(0,0,0,0.40), inset 0 1px 0 rgba(255,255,255,0.15)'
     : isTrayOp   ? 'none'
-    : isOneFactor  ? `0 0 0 2px ${FACTOR_ONE_OUTLINE}, 0 0 10px ${FACTOR_ONE_GLOW}, 0 3px 0 rgba(0,0,0,0.22)`
-    : isWarmFactor ? `0 0 0 2px ${FACTOR_WARM_OUTLINE}, 0 0 10px ${FACTOR_WARM_GLOW}, 0 3px 0 rgba(0,0,0,0.22)`
+    : isOneFactor  ? `0 0 0 3px ${FACTOR_ONE_OUTLINE}, 0 0 16px ${FACTOR_ONE_GLOW}, 0 4px 0 rgba(0,0,0,0.32)`
+    : isWarmFactor ? `0 0 0 3px ${FACTOR_WARM_OUTLINE}, 0 0 16px ${FACTOR_WARM_GLOW}, 0 4px 0 rgba(0,0,0,0.32)`
     : baseShadow;
 
   return (
@@ -139,7 +142,7 @@ const Tile: React.FC<TileProps> = ({
       style={{ width: tileSize, height: tileSize, transform: `translate(${x}px, ${y}px) scale(${scale})` }}
     >
       <div
-        className={`w-full h-full flex flex-col items-center justify-center border relative overflow-hidden transition-all duration-300 ${zapping ? 'ring-4 ring-cyan-400 z-50' : ''} ${isHighlighted ? 'ring-4 ring-white' : ''} ${isStone ? 'opacity-90' : ''} ${isWarmFactor ? 'factor-glow' : ''} ${isOneFactor ? 'factor-glow-one' : ''}`}
+        className={`w-full h-full flex flex-col items-center justify-center border relative overflow-hidden transition-all duration-100 ${zapping ? 'ring-4 ring-cyan-400 z-50' : ''} ${isHighlighted ? 'ring-4 ring-white' : ''} ${isStone ? 'opacity-90' : ''} ${isWarmFactor ? 'factor-glow' : ''} ${isOneFactor ? 'factor-glow-one' : ''}`}
         style={{
           background:  bg,
           color:       text,

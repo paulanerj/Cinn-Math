@@ -22,17 +22,20 @@ import { useToast } from '@/src/platform/ui/ToastContext';
 import { injectCombineGridStyles } from './combineGridStyles';
 
 // Inject CombineGrid tile animations once at module load (idempotent, no React lifecycle needed)
+// §5 SHARED_READY: HUD layout (top bar / bottom icon bar) is structurally portable to SpeedGrid.
+// Extract shared shell from App.tsx before merging. Keep game-state logic separate.
 injectCombineGridStyles();
 
 const DEFAULT_RECIPE = [12, 15, 24, 32, 56];
 const BUILD_STAMP    = "CG-STAMP-2";
 const DEBUG_END      = false; // set true to diagnose end-trigger failures
 
+// §4 HUD: IconBtn — stronger depth shadow, clearer active/hover feedback, sub-100ms transition
 const IconBtn: React.FC<{ onClick: () => void; title: string; children: React.ReactNode }> = ({ onClick, title, children }) => (
   <button
     onClick={onClick}
     title={title}
-    className="w-12 h-12 rounded-full bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/70 hover:text-white active:scale-90 transition-all shadow-[0_4px_8px_rgba(0,0,0,0.4)] shrink-0"
+    className="w-12 h-12 rounded-full bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/60 hover:text-white hover:bg-[#333336] active:scale-90 active:bg-[#222224] transition-all duration-100 shadow-[0_4px_8px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.06)] shrink-0"
   >
     {children}
   </button>
@@ -380,22 +383,22 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
     <div className="flex flex-col items-center h-[100dvh] bg-[#141416] text-white overflow-hidden font-sans game-ui">
       <div className="w-full max-w-[520px] sm:max-w-[600px] lg:max-w-[760px] h-full flex flex-col relative border-x border-white/5 bg-[#1a1a1c] overflow-hidden">
 
-        {/* ── Compact Top Bar ── */}
-        <div className="flex items-center gap-2 px-3 h-[58px] shrink-0 bg-[#1a1a1c] border-b border-white/5 z-50">
+        {/* ── Compact Top Bar ── §4 HUD: wider gap, clearer separator, stronger target tile */}
+        <div className="flex items-center gap-3 px-4 h-[58px] shrink-0 bg-[#1a1a1c] border-b border-white/[0.08] z-50">
           {/* Back */}
           {onBack && (
             <button
               onClick={onBack}
-              className="w-11 h-11 rounded-2xl bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/70 hover:text-white active:scale-90 transition-all shadow-md shrink-0"
+              className="w-11 h-11 rounded-2xl bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/60 hover:text-white hover:bg-[#333336] active:scale-90 transition-all duration-100 shadow-[0_4px_8px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.06)] shrink-0"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="15 18 9 12 15 6" />
               </svg>
             </button>
           )}
-          {/* Target tile with lifetime badge */}
+          {/* Target tile with lifetime badge — stronger shadow for visual anchor */}
           <div className="relative shrink-0">
-            <div className="w-11 h-11 rounded-2xl bg-white flex items-center justify-center shadow-lg">
+            <div className="w-11 h-11 rounded-2xl bg-white flex items-center justify-center shadow-[0_4px_12px_rgba(255,255,255,0.12),0_2px_0_rgba(0,0,0,0.3)]">
               <span className="text-black font-black text-xl leading-none">{targetValue}</span>
             </div>
             <div className="absolute -top-1.5 -right-1.5 bg-amber-500 text-white text-[10px] font-bold rounded-full border-2 border-[#1a1a1c] shadow-sm min-w-[20px] h-5 flex items-center justify-center px-1 leading-none">
@@ -449,8 +452,8 @@ const CombineGridVNextGame: React.FC<CombineGridVNextGameProps> = ({ onBack }) =
           )}
         </main>
 
-        {/* ── Bottom Icon Bar ── */}
-        <div className="flex items-center justify-evenly px-4 pt-3 pb-6 bg-[#111113] border-t border-white/[0.08] shrink-0 z-50" style={{ boxShadow: 'inset 0 4px 12px rgba(0,0,0,0.45)' }}>
+        {/* ── Bottom Icon Bar ── §4 HUD: stronger inset shadow, deeper background */}
+        <div className="flex items-center justify-evenly px-4 pt-3 pb-6 bg-[#111113] border-t border-white/[0.08] shrink-0 z-50" style={{ boxShadow: 'inset 0 4px 16px rgba(0,0,0,0.55)' }}>
           {/* Prev */}
           <IconBtn onClick={handlePrevTarget} title="Previous">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>

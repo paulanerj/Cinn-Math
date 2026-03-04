@@ -14,8 +14,9 @@ export const PAD          = 6;   // px: board inner padding (all sides)
 export const BASE_RADIUS_PX = 16; // px: base tile corner radius
 
 // ── Factor glow tokens ─────────────────────────────────────────────────────────
-export const FACTOR_WARM_OUTLINE       = 'rgba(249,115,22,0.55)';  // orange ring  (val > 1, is factor)
-export const FACTOR_WARM_GLOW          = 'rgba(249,115,22,0.25)';  // orange halo  (val > 1, is factor)
-export const FACTOR_ONE_OUTLINE        = 'rgba(56,189,248,0.55)';  // sky-blue ring (val === 1, is factor)
-export const FACTOR_ONE_GLOW           = 'rgba(56,189,248,0.20)';  // sky-blue halo (val === 1, is factor)
+// Phase 3 §3: increased opacity/radius for better readability on small screens
+export const FACTOR_WARM_OUTLINE       = 'rgba(249,115,22,0.75)';  // orange ring  (val > 1, is factor)
+export const FACTOR_WARM_GLOW          = 'rgba(249,115,22,0.40)';  // orange halo  (val > 1, is factor)
+export const FACTOR_ONE_OUTLINE        = 'rgba(56,189,248,0.75)';  // sky-blue ring (val === 1, is factor)
+export const FACTOR_ONE_GLOW           = 'rgba(56,189,248,0.35)';  // sky-blue halo (val === 1, is factor)
 export const FACTOR_REVEAL_DURATION_MS = 650;                       // ms: one-shot reveal animation duration
