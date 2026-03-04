@@ -19,6 +19,10 @@ import { Trace } from './debug/trace';
 import { SoundEngine } from './services/SoundEngine';
 import EquationVault from './components/EquationTracker';
 import { useToast } from '@/src/platform/ui/ToastContext';
+import { injectCombineGridStyles } from './combineGridStyles';
+
+// Inject CombineGrid tile animations once at module load (idempotent, no React lifecycle needed)
+injectCombineGridStyles();
 
 const DEFAULT_RECIPE = [12, 15, 24, 32, 56];
 const BUILD_STAMP    = "CG-STAMP-2";

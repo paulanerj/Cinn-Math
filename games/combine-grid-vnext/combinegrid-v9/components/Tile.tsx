@@ -15,7 +15,6 @@ import {
   FACTOR_WARM_GLOW,
   FACTOR_ONE_OUTLINE,
   FACTOR_ONE_GLOW,
-  FACTOR_REVEAL_DURATION_MS,
 } from '../uiTokens';
 
 // ── Shadow tokens (local to Tile — not parameterised across components) ────────
