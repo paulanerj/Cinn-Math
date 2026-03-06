@@ -101,30 +101,3 @@ export const HUDIconBtn: React.FC<HUDIconBtnProps> = ({ onClick, title, children
     {children}
   </button>
 );
-
-
-// ── Icon Button ───────────────────────────────────────────────────────────────
-
-interface HUDIconBtnProps {
-  onClick: () => void;
-  title: string;
-  children: React.ReactNode;
-  /** Optional extra className for game-specific icon color or size overrides */
-  className?: string;
-}
-
-/**
- * Standard 48×48px circular icon action button.
- * Depth shadow with inset shine. ANIM_FAST (100ms) transitions.
- * Hover: brightens bg. Active: scales down + darkens.
- */
-export const HUDIconBtn: React.FC<HUDIconBtnProps> = ({ onClick, title, children, className = '' }) => (
-  <button
-    onClick={onClick}
-    title={title}
-    style={{ transitionDuration: `${ANIM_FAST}ms` }}
-    className={`w-12 h-12 rounded-full bg-[#2a2a2d] border border-white/[0.08] flex items-center justify-center text-white/60 hover:text-white hover:bg-[#333336] active:scale-90 active:bg-[#222224] transition-all shadow-[0_4px_8px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.06)] shrink-0 ${className}`}
-  >
-    {children}
-  </button>
-);
