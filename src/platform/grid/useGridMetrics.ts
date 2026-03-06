@@ -50,9 +50,11 @@ export function useGridMetrics(rows: number, cols: number) {
     // The grid is constrained to a square that fits inside the viewport.
     const gridSizePx = Math.min(width, height);
 
-    // Cell size is derived from rows/cols
-    const cellSize = Math.floor(
-      Math.min(gridSizePx / cols, gridSizePx / rows)
+    // Cell size is derived from rows/cols, capped to prevent overly large tiles on desktop
+    const MAX_TILE_SIZE = 110;
+    const cellSize = Math.min(
+      MAX_TILE_SIZE,
+      Math.floor(Math.min(gridSizePx / cols, gridSizePx / rows))
     );
 
     return {

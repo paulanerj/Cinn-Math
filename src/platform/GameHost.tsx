@@ -4,7 +4,7 @@ import React, { useEffect } from "react";
 import type { GameId } from "./PlatformShell";
 
 import CombineGridGame from "../../games/combine-grid-vnext/combinegrid-v9/App";
-import SpeedGridGame from "../../games/speed-grid/ui/SpeedGridGame";
+import SpeedGridGame from "../games/speed-grid/ui/SpeedGridGame";
 import { EngineSession } from "../../engine/public";
 import { ErrorBoundary } from "./ui/ErrorBoundary";
 

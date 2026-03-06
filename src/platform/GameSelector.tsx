@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 
 import CombineGridGame from "../../games/combine-grid-vnext/combinegrid-v9/App";
-import SpeedGridGame from "../../games/speed-grid/ui/SpeedGridGame";
+import SpeedGridGame from "../games/speed-grid/ui/SpeedGridGame";
 
 type GameType = "splash" | "combine-grid" | "speed-grid";
 
