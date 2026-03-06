@@ -1,0 +1,6 @@
+
+{
+  "name": "GridMath: Ceramic Engine V8",
+  "description": "A high-performance grid-math engine with physics-based gravity, multiple interaction modes, and a modular QA sandbox architecture.",
+  "requestFramePermissions": []
+}

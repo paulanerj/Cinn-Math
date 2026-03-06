@@ -1,0 +1,20 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.game-ui {
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.game-ui button {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.game-ui .selectable {
+  user-select: auto;
+  -webkit-user-select: auto;
+}

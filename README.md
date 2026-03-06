@@ -1,3 +1,4 @@
+
 <div align="center">
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
@@ -6,7 +7,7 @@
 
 This contains everything you need to run your app locally.
 
-View your app in AI Studio: https://ai.studio/apps/drive/1idoG-_LVm9BOsJYXNLaFKwD_9Q2-9KAG
+View your app in AI Studio: https://ai.studio/apps/35d9e918-d9dd-4bb6-84c2-97a4bfb32ab7
 
 ## Run Locally
 
