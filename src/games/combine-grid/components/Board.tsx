@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { Tile as TileType, GridPos } from '../types';
 import { Selection } from '../services/SelectionService';
 import Tile from './Tile';
-import { GAP, GRID_SCALE } from '../uiTokens';
+import { GAP } from '../uiTokens';
 
 interface BoardProps {
   grid: TileType[][];
@@ -27,8 +27,6 @@ export default function Board({ grid, selection, tileSize, onTilePress }: BoardP
         display: 'grid',
         gridTemplateColumns: `repeat(${grid[0]?.length ?? 4}, ${tileSize}px)`,
         gap: GAP,
-        transform: `scale(${GRID_SCALE})`,
-        transformOrigin: 'center center',
       }}
     >
       {grid.map((row, r) =>
