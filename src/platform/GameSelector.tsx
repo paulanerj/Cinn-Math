@@ -15,8 +15,7 @@
 
 import React, { useState } from "react";
 
-// [PHASE 6] Uncomment when CombineGrid reconstruction is complete:
-// import CombineGridGame from "../games/combine-grid/CombineGridGame";
+import CombineGridGame from "../games/combine-grid/CombineGridGame";
 
 // [PHASE 7] Uncomment when SpeedGrid reconstruction is complete:
 // import SpeedGridGame from "../games/speed-grid/SpeedGridGame";
@@ -123,18 +122,12 @@ export default function GameSelector() {
   }
 
   // ── Game renders ─────────────────────────────────────────────────────────
-  // [PHASE 6] Replace PhasePlaceholder with:
-  //   {game === "combine-grid" && <CombineGridGame onBack={() => setGame("splash")} />}
   // [PHASE 7] Replace PhasePlaceholder with:
   //   {game === "speed-grid" && <SpeedGridGame onBack={() => setGame("splash")} />}
   return (
     <div style={{ width: "100%", height: "100%" }}>
       {game === "combine-grid" && (
-        <PhasePlaceholder
-          name="CombineGrid"
-          phase="Phase 6 — reconstruction pending"
-          onBack={() => setGame("splash")}
-        />
+        <CombineGridGame onBack={() => setGame("splash")} />
       )}
       {game === "speed-grid" && (
         <PhasePlaceholder
