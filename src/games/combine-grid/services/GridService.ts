@@ -1,7 +1,9 @@
 // [ROLE] Pure board management functions for CombineGrid.
 // No React. No side effects. All functions take data and return data.
 
-import { Tile, GridPos, CombineMode } from '../types';
+import { Tile, GridPos } from '../types';
+
+type Mode = 'sum' | 'multiply';
 import { ROWS, COLS, TILE_VAL_MIN, TILE_VAL_MAX } from '../constants';
 
 function makeTile(val: number): Tile {
@@ -62,7 +64,7 @@ export function applyGravity(
 export function evaluateSelection(
   board: Tile[][],
   selection: GridPos[],
-  mode: CombineMode,
+  mode: Mode,
 ): number {
   const vals = selection.map(({ r, c }) => board[r][c].val);
   if (vals.length === 0) return mode === 'sum' ? 0 : 1;
@@ -75,7 +77,7 @@ export function evaluateSelection(
  * Generates a target number that is definitely achievable on this board.
  * Picks 2 or 3 random tiles and returns their sum or product.
  */
-export function generateTarget(board: Tile[][], mode: CombineMode): number {
+export function generateTarget(board: Tile[][], mode: Mode): number {
   const flat: number[] = [];
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
@@ -95,7 +97,7 @@ export function generateTarget(board: Tile[][], mode: CombineMode): number {
 export function hasSolution(
   board: Tile[][],
   target: number,
-  mode: CombineMode,
+  mode: Mode,
 ): boolean {
   const vals: number[] = [];
   for (let r = 0; r < ROWS; r++) {

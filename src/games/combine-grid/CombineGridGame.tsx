@@ -8,14 +8,16 @@ import {
   ROUND_DURATION_SECS,
   CLEAR_MS,
   ROUND_OVER_AUTOADVANCE_MS,
+  STALEMATE_VALID_THRESHOLD,
 } from './constants';
-import { HUD_TOP_H, HUD_BOT_H, SAFE_MARGIN, GAP } from './uiTokens';
-import { GamePhase, Tile, GridPos, CombineMode } from './types';
+import { HUD_TOP_H, HUD_BOT_H, SAFE_MARGIN } from './uiTokens';
+import { GamePhase, Tile, GridPos } from './types';
 import {
   createBoard,
   applyGravity,
   evaluateSelection,
   generateTarget,
+  hasSolution,
 } from './services/GridService';
 import { toggleTile } from './services/SelectionService';
 
@@ -23,70 +25,55 @@ import { toggleTile } from './services/SelectionService';
 
 interface CGState {
   phase: GamePhase;
-  mode: CombineMode;
+  mode: 'sum' | 'multiply';
   board: Tile[][];
   selection: GridPos[];
   target: number;
   selectionVal: number;
   score: number;
   roundScore: number;
-  combo: number;
-  comboResetKey: number;
   roundsCompleted: number;
   roundScores: number[];
   timeLeft: number;
   clearingPositions: GridPos[];
   newTileIds: Set<string>;
-  shakeKey: number; // increments on wrong selection — drives shake animation
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────
 
 type Action =
-  | { type: 'BEGIN_GAME'; mode: CombineMode }
   | { type: 'TICK' }
   | { type: 'TAP_TILE'; pos: GridPos }
   | { type: 'CLEAR_COMPLETE'; board: Tile[][]; newIds: Set<string>; target: number }
   | { type: 'ADVANCE_ROUND' }
+  | { type: 'RESOLVE_STALEMATE' }
   | { type: 'PLAY_AGAIN' };
 
-// ── Initial state ─────────────────────────────────────────────────────────────
+// ── Lazy initializer ──────────────────────────────────────────────────────────
 
-const BLANK: CGState = {
-  phase: 'IDLE',
-  mode: 'sum',
-  board: [],
-  selection: [],
-  target: 0,
-  selectionVal: 0,
-  score: 0,
-  roundScore: 0,
-  combo: 0,
-  comboResetKey: 0,
-  roundsCompleted: 0,
-  roundScores: [],
-  timeLeft: ROUND_DURATION_SECS,
-  clearingPositions: [],
-  newTileIds: new Set(),
-  shakeKey: 0,
-};
+function initGame(): CGState {
+  const board = createBoard();
+  return {
+    phase: 'SELECTING',
+    mode: 'sum',
+    board,
+    selection: [],
+    target: generateTarget(board, 'sum'),
+    selectionVal: 0,
+    score: 0,
+    roundScore: 0,
+    roundsCompleted: 0,
+    roundScores: [],
+    timeLeft: ROUND_DURATION_SECS,
+    clearingPositions: [],
+    newTileIds: new Set(),
+  };
+}
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
 
 function reducer(state: CGState, action: Action): CGState {
   switch (action.type) {
-    case 'BEGIN_GAME': {
-      const board = createBoard();
-      return {
-        ...BLANK,
-        phase: 'SELECTING',
-        mode: action.mode,
-        board,
-        target: generateTarget(board, action.mode),
-        timeLeft: ROUND_DURATION_SECS,
-      };
-    }
-
     case 'TICK': {
       if (state.phase !== 'SELECTING') return state;
       const next = state.timeLeft - 1;
@@ -102,8 +89,6 @@ function reducer(state: CGState, action: Action): CGState {
           selection: [],
           selectionVal: 0,
           clearingPositions: [],
-          combo: 0,
-          comboResetKey: state.comboResetKey + 1,
         };
       }
       return { ...state, timeLeft: next };
@@ -116,14 +101,7 @@ function reducer(state: CGState, action: Action): CGState {
 
       // Over target → error, reset selection
       if (val > state.target) {
-        return {
-          ...state,
-          selection: [],
-          selectionVal: 0,
-          shakeKey: state.shakeKey + 1,
-          combo: 0,
-          comboResetKey: state.comboResetKey + 1,
-        };
+        return { ...state, selection: [], selectionVal: 0 };
       }
 
       // Match! (need at least 2 tiles)
@@ -131,17 +109,14 @@ function reducer(state: CGState, action: Action): CGState {
         const basePoints = newSel
           .map(({ r, c }) => state.board[r][c].val)
           .reduce((a, b) => a + b, 0);
-        const multiplier = 1 + Math.floor(state.combo / 3) * 0.5;
-        const points = Math.ceil(basePoints * multiplier);
         return {
           ...state,
           phase: 'CLEARING',
           selection: [],
           selectionVal: 0,
           clearingPositions: newSel,
-          score: state.score + points,
-          roundScore: state.roundScore + points,
-          combo: state.combo + 1,
+          score: state.score + basePoints,
+          roundScore: state.roundScore + basePoints,
         };
       }
 
@@ -149,9 +124,16 @@ function reducer(state: CGState, action: Action): CGState {
     }
 
     case 'CLEAR_COMPLETE': {
+      // Wire stalemate: STALEMATE_VALID_THRESHOLD = 1 means we need ≥1 valid selection
+      const solvable = hasSolution(action.board, action.target, state.mode);
+      const nextPhase = !solvable
+        ? 'STALEMATE'
+        : state.timeLeft > 0
+        ? 'SELECTING'
+        : 'ROUND_OVER';
       return {
         ...state,
-        phase: state.timeLeft > 0 ? 'SELECTING' : 'ROUND_OVER',
+        phase: nextPhase,
         board: action.board,
         newTileIds: action.newIds,
         target: action.target,
@@ -177,53 +159,45 @@ function reducer(state: CGState, action: Action): CGState {
         timeLeft: ROUND_DURATION_SECS,
         clearingPositions: [],
         newTileIds: new Set(),
-        combo: 0,
-        comboResetKey: state.comboResetKey + 1,
       };
     }
 
-    case 'PLAY_AGAIN': {
-      const board = createBoard();
-      return {
-        ...BLANK,
-        phase: 'SELECTING',
-        mode: state.mode,
-        board,
-        target: generateTarget(board, state.mode),
-        timeLeft: ROUND_DURATION_SECS,
-      };
+    case 'RESOLVE_STALEMATE': {
+      // Generate a new target for the same board and resume play
+      const target = generateTarget(state.board, state.mode);
+      return { ...state, phase: 'SELECTING', target };
     }
+
+    case 'PLAY_AGAIN':
+      return initGame();
 
     default:
       return state;
   }
 }
 
-// ── Tile size ─────────────────────────────────────────────────────────────────
+// ── Tile size — restored to baseline formula ──────────────────────────────────
 
 function computeTileSize(): number {
-  const availH = window.innerHeight - HUD_TOP_H - HUD_BOT_H - SAFE_MARGIN * 2 - 20;
+  const availH = window.innerHeight - HUD_TOP_H - HUD_BOT_H - SAFE_MARGIN * 2 - 32;
   const availW = window.innerWidth - SAFE_MARGIN * 2 - 16;
-  const byH = Math.floor((availH - (ROWS - 1) * GAP) / ROWS);
-  const byW = Math.floor((availW - (COLS - 1) * GAP) / COLS);
+  const byH = Math.floor(availH / ROWS);
+  const byW = Math.floor(availW / COLS);
   return Math.min(byH, byW, 80);
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
-  const [state, dispatch] = useReducer(reducer, BLANK);
+  const [state, dispatch] = useReducer(reducer, undefined, initGame);
   const [tileSize, setTileSize] = useState(computeTileSize);
-  const [isShaking, setIsShaking] = useState(false);
   const isMounted = useRef(true);
 
-  // Keep a ref to the latest state values needed inside setTimeout closures
+  // Refs for stale-closure safety in setTimeout callbacks
   const latestBoard = useRef(state.board);
   const latestClearing = useRef(state.clearingPositions);
-  const latestMode = useRef(state.mode);
   latestBoard.current = state.board;
   latestClearing.current = state.clearingPositions;
-  latestMode.current = state.mode;
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
@@ -245,7 +219,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     return () => clearInterval(id);
   }, [state.phase]);
 
-  // Clear animation → gravity after CLEAR_MS
+  // Clear animation → apply gravity after CLEAR_MS
   useEffect(() => {
     if (state.phase !== 'CLEARING') return;
     const id = setTimeout(() => {
@@ -254,7 +228,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
         latestBoard.current,
         latestClearing.current,
       );
-      const target = generateTarget(newBoard, latestMode.current);
+      const target = generateTarget(newBoard, 'sum');
       dispatch({ type: 'CLEAR_COMPLETE', board: newBoard, newIds, target });
     }, CLEAR_MS);
     return () => clearTimeout(id);
@@ -270,63 +244,30 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     return () => clearTimeout(id);
   }, [state.phase, state.roundsCompleted]);
 
-  // Shake animation trigger
+  // Stalemate resolution — generate new target and resume
   useEffect(() => {
-    if (state.shakeKey === 0) return;
-    setIsShaking(true);
-    const id = setTimeout(() => setIsShaking(false), 350);
+    if (state.phase !== 'STALEMATE') return;
+    const id = setTimeout(() => {
+      if (!isMounted.current) return;
+      dispatch({ type: 'RESOLVE_STALEMATE' });
+    }, 1500);
     return () => clearTimeout(id);
-  }, [state.shakeKey]);
+  }, [state.phase]);
 
   // ── Render: FINAL ───────────────────────────────────────────────────────────
   if (state.phase === 'FINAL') {
     return (
       <ResultScreen
         totalScore={state.score}
-        roundScores={state.roundScores}
-        mode={state.mode}
-        onPlayAgain={() => dispatch({ type: 'PLAY_AGAIN' })}
         onBack={onBack ?? (() => {})}
       />
-    );
-  }
-
-  // ── Render: IDLE — mode selector ────────────────────────────────────────────
-  if (state.phase === 'IDLE') {
-    return (
-      <div style={fullScreen}>
-        <div style={{ color: '#e67e22', fontSize: 13, fontWeight: 800, letterSpacing: 4, textTransform: 'uppercase', marginBottom: 4 }}>
-          CombineGrid
-        </div>
-        <div style={{ color: '#fff', fontSize: 22, fontWeight: 900, marginBottom: 12 }}>
-          Choose Mode
-        </div>
-        <button
-          onClick={() => dispatch({ type: 'BEGIN_GAME', mode: 'sum' })}
-          style={modeBtn('#e67e22', 'rgba(154,52,18,1)')}
-        >
-          ＋ Addition
-        </button>
-        <button
-          onClick={() => dispatch({ type: 'BEGIN_GAME', mode: 'multiply' })}
-          style={{ ...modeBtn('#8b5cf6', 'rgba(76,29,149,1)') }}
-        >
-          × Multiply
-        </button>
-        <button
-          onClick={onBack}
-          style={{ marginTop: 8, padding: '12px 32px', borderRadius: 14, border: 'none', background: 'rgba(255,255,255,0.06)', color: '#888', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}
-        >
-          ← Back
-        </button>
-      </div>
     );
   }
 
   // ── Render: ROUND_OVER interstitial ─────────────────────────────────────────
   if (state.phase === 'ROUND_OVER') {
     return (
-      <div style={fullScreen}>
+      <div style={centeredScreen}>
         <div style={{ color: '#e67e22', fontSize: 13, fontWeight: 800, letterSpacing: 3, textTransform: 'uppercase' }}>
           Round {state.roundsCompleted} Complete
         </div>
@@ -345,11 +286,21 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     );
   }
 
+  // ── Render: STALEMATE ────────────────────────────────────────────────────────
+  if (state.phase === 'STALEMATE') {
+    return (
+      <div style={centeredScreen}>
+        <div style={{ color: '#888', fontSize: 14, fontWeight: 700 }}>
+          No valid moves — reshuffling…
+        </div>
+      </div>
+    );
+  }
+
   // ── Render: Main game (SELECTING | CLEARING) ────────────────────────────────
   const timerPct = state.timeLeft / ROUND_DURATION_SECS;
   const timerColor =
     state.timeLeft <= 5 ? '#ef4444' : state.timeLeft <= 10 ? '#f97316' : '#22c55e';
-  const modeSymbol = state.mode === 'sum' ? '+' : '×';
 
   return (
     <div
@@ -380,7 +331,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
         <Stat label="ROUND" value={`${state.roundsCompleted + 1}/${ROUNDS_PER_SESSION}`} />
         <div style={{ textAlign: 'center' }}>
           <div style={{ color: '#888', fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
-            TARGET {modeSymbol}
+            TARGET +
           </div>
           <div
             style={{
@@ -404,9 +355,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
           tileSize={tileSize}
           selection={state.selection}
           clearingPositions={state.clearingPositions}
-          newTileIds={state.newTileIds}
           onTilePress={(pos) => dispatch({ type: 'TAP_TILE', pos })}
-          shake={isShaking}
         />
       </div>
 
@@ -424,34 +373,15 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
           flexShrink: 0,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          {/* Selection readout */}
-          <div style={{ fontSize: 13, fontWeight: 700 }}>
-            {state.selectionVal > 0 ? (
-              <span>
-                <span style={{ color: '#fff', fontSize: 16 }}>{state.selectionVal}</span>
-                <span style={{ color: '#555', fontSize: 12 }}> / {state.target}</span>
-              </span>
-            ) : (
-              <span style={{ color: '#444' }}>Select tiles</span>
-            )}
-          </div>
-          {/* Combo badge */}
-          {state.combo > 0 && (
-            <div
-              key={state.comboResetKey}
-              style={{
-                background: 'rgba(230,126,34,0.14)',
-                border: '1px solid rgba(230,126,34,0.35)',
-                borderRadius: 8,
-                padding: '2px 10px',
-                color: '#e67e22',
-                fontSize: 12,
-                fontWeight: 800,
-              }}
-            >
-              {state.combo}× COMBO
-            </div>
+        {/* Selection value readout */}
+        <div style={{ fontSize: 13, fontWeight: 700 }}>
+          {state.selectionVal > 0 ? (
+            <span>
+              <span style={{ color: '#fff', fontSize: 16 }}>{state.selectionVal}</span>
+              <span style={{ color: '#555', fontSize: 12 }}> / {state.target}</span>
+            </span>
+          ) : (
+            <span style={{ color: '#444' }}>Select tiles</span>
           )}
         </div>
 
@@ -483,7 +413,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-const fullScreen: React.CSSProperties = {
+const centeredScreen: React.CSSProperties = {
   width: '100%',
   height: '100%',
   background: '#141416',
@@ -494,19 +424,3 @@ const fullScreen: React.CSSProperties = {
   gap: 12,
   fontFamily: 'Nunito, sans-serif',
 };
-
-function modeBtn(bg: string, shadow: string): React.CSSProperties {
-  return {
-    width: 240,
-    padding: '18px 0',
-    borderRadius: 18,
-    border: 'none',
-    background: bg,
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: 800,
-    cursor: 'pointer',
-    letterSpacing: 1,
-    boxShadow: `0 5px 0 ${shadow}`,
-  };
-}

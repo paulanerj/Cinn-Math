@@ -15,5 +15,3 @@ export type GamePhase =
   | 'ROUND_OVER'
   | 'STALEMATE'
   | 'FINAL';
-
-export type CombineMode = 'sum' | 'multiply';
