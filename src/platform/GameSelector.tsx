@@ -17,8 +17,7 @@ import React, { useState } from "react";
 
 import CombineGridGame from "../games/combine-grid/CombineGridGame";
 
-// [PHASE 7] Uncomment when SpeedGrid reconstruction is complete:
-// import SpeedGridGame from "../games/speed-grid/SpeedGridGame";
+import SpeedGridGame from "../games/speed-grid/SpeedGridGame";
 
 type GameType = "splash" | "combine-grid" | "speed-grid";
 
@@ -130,11 +129,7 @@ export default function GameSelector() {
         <CombineGridGame onBack={() => setGame("splash")} />
       )}
       {game === "speed-grid" && (
-        <PhasePlaceholder
-          name="SpeedGrid"
-          phase="Phase 7 — reconstruction pending"
-          onBack={() => setGame("splash")}
-        />
+        <SpeedGridGame onBack={() => setGame("splash")} />
       )}
     </div>
   );
