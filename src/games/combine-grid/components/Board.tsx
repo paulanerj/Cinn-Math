@@ -24,6 +24,14 @@ export default function Board({
   return (
     <div
       style={{
+        background: 'rgba(0,0,0,0.30)',
+        borderRadius: 12,
+        padding: 6,
+        boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.40)',
+      }}
+    >
+    <div
+      style={{
         display: 'grid',
         gridTemplateColumns: `repeat(${cols}, ${tileSize}px)`,
         gap: GAP,
@@ -46,6 +54,7 @@ export default function Board({
           );
         }),
       )}
+    </div>
     </div>
   );
 }
