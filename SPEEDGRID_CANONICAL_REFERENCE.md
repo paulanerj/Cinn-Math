@@ -18,7 +18,7 @@ SGPhase = 'WAITING_TO_START' | 'PLAYING' | 'CLEARING' | 'GAME_OVER'
 |---|---|
 | `WAITING_TO_START` | Board visible, timer at full, waiting for first touch. No tick processing. |
 | `PLAYING` | Timer running. Pointer input accepted. Chain may be built and committed. |
-| `CLEARING` | A correct chain was committed. Gravity/refill effect is running. Timer continues to tick. |
+| `CLEARING` | A correct chain was committed. Gravity/refill effect is running. Timer is **paused** (interval cleared). |
 | `GAME_OVER` | Timer expired. No input accepted. ResultScreen visible. |
 
 ### 1.2 Legal Transitions
@@ -28,7 +28,6 @@ WAITING_TO_START ──► PLAYING       (CHAIN_START while in WAITING_TO_START)
 PLAYING          ──► CLEARING      (CHAIN_COMMIT with correct answer)
 CLEARING         ──► PLAYING       (GRAVITY_DONE dispatched by effect)
 PLAYING          ──► GAME_OVER     (TICK causes timer expiry)
-CLEARING         ──► GAME_OVER     (TICK causes timer expiry during gravity)
 GAME_OVER        ──► WAITING_TO_START  (PLAY_AGAIN replaces entire state)
 ```
 
@@ -41,7 +40,8 @@ There is no `PLAYING → WAITING_TO_START` transition mid-game. Play Again alway
 - Timer starts (`startTimer`) inside the reducer on `CHAIN_START` when `phase === 'WAITING_TO_START'`.
 - Every 1 second, a `useEffect` (setInterval) dispatches `TICK`.
 - On `TICK`: reducer calls `tick(state.timer)`. If `isExpired(newTimer)` → phase transitions to `GAME_OVER`.
-- `TICK` is processed in **both** `PLAYING` and `CLEARING`. The timer does not pause during gravity animation.
+- `TICK` is processed **only** during `PLAYING`. The timer effect guard is `if (state.phase !== 'PLAYING') return` — the setInterval is never started during `CLEARING`, `WAITING_TO_START`, or `GAME_OVER`. When phase leaves `PLAYING`, the effect cleanup clears the interval.
+- **The timer pauses during CLEARING.** Gravity animation time does not count against the player.
 - `addTime(timer, seconds)` is called inside the reducer on a correct bonus-tile chain commit, before phase transitions to `CLEARING`. `addTime` clamps to `>= 0` and ignores product-mode (countdown only). It does **not** call `startTimer` again; the timer is already running.
 
 ### 1.4 Chain Lifecycle
@@ -71,7 +71,7 @@ Steps (all inside reducer, all pure):
 1. Collect chain tile values from `state.grid`.
 2. Count bonus tiles in chain: `bonusCount = chainPositions.filter(p => bonusMask[p.row][p.col]).length`.
 3. `addTime(timer, bonusCount * BONUS_TIME_SECS)` — time reward, clamped ≥ 0.
-4. `points = calculatePoints(chain.length * 10, score.comboCount)` — `ceil(base * multiplier)`, min 1.
+4. `basePoints = evaluate(values, mode)` — the sum (or product) of the actual tile values in the chain. `points = calculatePoints(basePoints, score.comboCount)` — `ceil(base * multiplier)`, min 1.
 5. `recordMatch(score, points)` — increments `score.score` and `score.comboCount`.
 6. `chainsCompleted += 1`, `bonusesCollected += bonusCount`.
 7. Clear chain to `emptyChain()`.
@@ -92,7 +92,7 @@ A `useEffect` watching `state.wrongFlash` sets a 600ms setTimeout to dispatch `C
 
 ### 1.7 Game-Over Flow
 
-1. `TICK` fires while in `PLAYING` or `CLEARING`.
+1. `TICK` fires while in `PLAYING` (only; interval does not run in other phases).
 2. Reducer calls `tick(timer)`. `isExpired(newTimer)` returns true.
 3. Phase → `GAME_OVER`. Chain cleared. Timer left as expired (remainingSeconds = 0).
 4. React renders `<ResultScreen score bonusesCollected chainsCompleted onPlayAgain onBack />`.
@@ -132,7 +132,8 @@ pointerup (board div)
                         CORRECT →
                           bonusCount = count chain positions where bonusMask[row][col]
                           addTime(timer, bonusCount * BONUS_TIME_SECS)
-                          points = calculatePoints(chain.length * 10, comboCount)
+                          basePoints = evaluate(values, mode)  [sum of tile values]
+                          points = calculatePoints(basePoints, comboCount)
                           recordMatch(score, points)
                           chainsCompleted++, bonusesCollected += bonusCount
                           emptyChain()
@@ -441,7 +442,7 @@ If `ROWS` or `COLS` change, `applyBonusMaskGravity`, `Board`, `SpeedTile`, `comp
 
 1. **Timer starts on first touch, not on game mount.** `WAITING_TO_START` is an intentional UX feature allowing the player to see the board before the clock starts. Do not move timer start to `initGame` or `useEffect`.
 
-2. **Timer ticks during CLEARING.** The game does not pause for gravity animation. This is intentional — the game stays under pressure. Do not add a phase guard to the tick effect.
+2. **Timer pauses during CLEARING.** The `useEffect` guard is `if (state.phase !== 'PLAYING') return`. The setInterval is cleared when phase leaves `PLAYING` and is not restarted until `GRAVITY_DONE` returns phase to `PLAYING`. Gravity animation time is free — the player is not penalized for it. Do not remove the phase guard or start a new interval during CLEARING.
 
 3. **PRNG advances only in effects, never in reducer.** The `prngRef.current` is called in the CLEARING effect for bonus tile spawning, and by `handlePlayAgain` for `initGame`. The reducer is pure. This split is load-bearing for correctness and future replay support.
 
@@ -505,7 +506,7 @@ SpeedGrid should be treated as the **reference implementation** for platform int
 - `applyBonusMaskGravity` is subtle (uses `preGravGrid`, not `newGrid`) — easy to accidentally break in a refactor
 - `stateRef` pattern is non-obvious — a cleanup pass could accidentally remove it
 - `GRAVITY_DONE` delivers target atomically — splitting this into two actions would introduce a frame of stale target display
-- Timer ticking during CLEARING is intentional but looks like a bug to new readers
+- Timer pausing during CLEARING is intentional (player not penalized for gravity anim time), but the phase guard `if (phase !== 'PLAYING') return` in the effect looks removable to a new reader
 - CombineGrid gravity is a parallel implementation that could drift further from engine gravity without being noticed
 
 ### What Must Be Protected Next
