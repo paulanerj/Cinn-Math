@@ -181,6 +181,24 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
     timerStartOrigin: 'none',
   });
 
+  // ── wrongFlash race fix ────────────────────────────────────────────────────
+  // The wrongFlash timer effect must restart its 600 ms window on *every*
+  // CHAIN_COMMIT that produces a wrong answer — even when wrongFlash is already
+  // true from a previous wrong answer.  If the effect depends only on
+  // `state.wrongFlash` (a boolean), a second wrong answer within 600 ms does
+  // not change the boolean, so the effect never re-fires and the old timer
+  // fires prematurely.
+  //
+  // Fix: maintain a chainCommitSeq counter that increments on every
+  // CHAIN_COMMIT dispatch (correct or wrong — we can't know the result here).
+  // The wrongFlash timer effect depends on chainCommitSeq, so it re-fires and
+  // resets its 600 ms window on every commit.  The `if (!state.wrongFlash)`
+  // guard inside the effect discards no-op calls on correct commits.
+  //
+  // React 18 automatic batching merges rawDispatch + setChainCommitSeq into a
+  // single re-render — no extra paint.
+  const [chainCommitSeq, setChainCommitSeq] = useState(0);
+
   // Telemetry-aware dispatch wrapper. Wraps rawDispatch so all dispatch
   // call sites are unchanged while logging every action to telemetryRef.
   const dispatch = useCallback((action: SGAction) => {
@@ -192,6 +210,9 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
       stateRef.current.phase === 'WAITING_TO_START'
     ) {
       log.timerStartOrigin = `CHAIN_START in WAITING_TO_START`;
+    }
+    if (action.type === 'CHAIN_COMMIT') {
+      setChainCommitSeq((s) => s + 1);
     }
     rawDispatch(action);
   }, [rawDispatch]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -240,11 +261,16 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
 
     let cancelled = false;
 
-    // Capture current state synchronously — stateRef is up-to-date because
-    // stateRef.current = state runs before effects (in render).
-    const clearGrid = stateRef.current.grid;         // has 0s at cleared positions
-    const clearMask = stateRef.current.bonusMask;    // has false at cleared positions
-    const clearMode = stateRef.current.mode;
+    // Capture grid, mask, and mode directly from the effect closure — NOT from
+    // stateRef.current.  `state` here is the value captured at the render that
+    // scheduled this effect (the render that produced phase === 'CLEARING').
+    // stateRef.current is updated on every render; if React batches a second
+    // render before this effect runs (possible under concurrent mode), reading
+    // stateRef.current would silently use a later state object, breaking the
+    // "gravity runs on exactly the post-commit board" invariant.
+    const clearGrid = state.grid;      // has 0s at cleared positions — commit-time snapshot
+    const clearMask = state.bonusMask; // has false at cleared positions — commit-time snapshot
+    const clearMode = state.mode;
 
     // Track spawn bonuses in a closure-local array indexed [col][spawnIndex].
     const spawnBonuses: boolean[][] = Array.from({ length: COLS }, () => []);
@@ -313,6 +339,12 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
   // [NOTE] profile and prngRef are stable (memo / ref) — omitting is safe.
 
   // ── Wrong flash clear ──────────────────────────────────────────────────────
+  // Depends on chainCommitSeq (not state.wrongFlash) so the 600 ms window
+  // resets on every CHAIN_COMMIT — even when wrongFlash is already true.
+  // The guard `if (!state.wrongFlash) return` discards no-op calls for
+  // correct commits (where wrongFlash is false).
+  // The effect's cleanup (return () => clearTimeout) runs when chainCommitSeq
+  // changes, cancelling the old timer before the new one starts.
 
   useEffect(() => {
     if (!state.wrongFlash) return;
@@ -320,7 +352,9 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
       dispatch({ type: 'CLEAR_WRONG_FLASH' });
     }, 600);
     return () => clearTimeout(id);
-  }, [state.wrongFlash]);
+  }, [chainCommitSeq]); // eslint-disable-line react-hooks/exhaustive-deps
+  // [NOTE] state.wrongFlash is read inside the effect; chainCommitSeq is the
+  // trigger. dispatch is stable (useCallback). Omitting both from deps is safe.
 
   // ── Telemetry overlay controls ──────────────────────────────────────────────
 
