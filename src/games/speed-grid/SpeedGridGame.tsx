@@ -272,24 +272,28 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
     const clearMask = state.bonusMask; // has false at cleared positions — commit-time snapshot
     const clearMode = state.mode;
 
-    // Track spawn bonuses in a closure-local array indexed [col][spawnIndex].
-    const spawnBonuses: boolean[][] = Array.from({ length: COLS }, () => []);
+    // Cache each SpawnedTile by (col, spawnIndex) so both spawnValue and
+    // spawnBonus callbacks draw from the same spawnTile() call — one PRNG
+    // token per tile, unchanged from before.
+    const spawnCache: { value: number; isBonus: boolean }[][] =
+      Array.from({ length: COLS }, () => []);
 
-    // Apply gravity. spawnValue closure tracks bonus status of new tiles.
+    // Apply gravity. spawnBonus is a pure cache lookup — no extra PRNG calls.
     const gravResult = applyGravity(
       clearGrid,
       ROWS,
       COLS,
       (col, spawnIndex) => {
         const sp = spawnTile(profile, prngRef.current);
-        spawnBonuses[col][spawnIndex] = sp.isBonus;
+        spawnCache[col][spawnIndex] = sp;
         return sp.value;
       },
+      (col, spawnIndex) => spawnCache[col][spawnIndex].isBonus,
     );
 
     // Telemetry: count gravity event + tiles spawned this cycle.
     telemetryRef.current.gravityEvents += 1;
-    telemetryRef.current.spawnEvents += spawnBonuses.reduce(
+    telemetryRef.current.spawnEvents += gravResult.spawnBonusMap.reduce(
       (sum, col) => sum + col.length,
       0,
     );
@@ -298,7 +302,7 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
     const newBonusMask = applyBonusMaskGravity(
       clearMask,
       clearGrid,
-      spawnBonuses,
+      gravResult.spawnBonusMap,
       ROWS,
       COLS,
     );

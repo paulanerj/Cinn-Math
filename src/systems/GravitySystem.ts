@@ -65,6 +65,8 @@ export interface SpawnedPosition {
  * [USAGE] Games consume grid as the new canonical board state.
  *         fallingTiles and spawnedPositions feed into GravityAnimator to
  *         produce per-tile animation frames.
+ *         spawnBonusMap feeds into BonusMaskSystem (applyBonusMaskGravity) so
+ *         callers no longer need a side-effect closure to capture bonus flags.
  */
 export interface GravityApplicationResult {
   /** The board after gravity and refill — use this as the new game board. */
@@ -81,6 +83,15 @@ export interface GravityApplicationResult {
   spawnedPositions: SpawnedPosition[];
   /** For each column, how many new tiles were spawned (0 if column was full). */
   spawnCountPerCol: number[];
+  /**
+   * Bonus flags for every spawned tile, indexed [col][spawnIndex].
+   * spawnIndex 0 = topmost spawned tile in the column.
+   * spawnBonusMap[c].length === spawnCountPerCol[c] for every column c.
+   *
+   * [USAGE] Pass directly to applyBonusMaskGravity() — eliminates the
+   *         side-effect closure pattern that previously captured these flags.
+   */
+  spawnBonusMap: boolean[][];
 }
 
 // ── Core function ─────────────────────────────────────────────────────────────
@@ -90,23 +101,34 @@ export interface GravityApplicationResult {
  * 1. Existing non-zero tiles fall to fill cleared (0) cells in their column.
  * 2. Remaining empty cells at the top of each column are filled by `spawnValue`.
  *
- * Returns the new grid plus movement metadata for animation.
+ * Returns the new grid, movement metadata for animation, and `spawnBonusMap`
+ * so callers can pass it directly to applyBonusMaskGravity() without needing
+ * a side-effect closure to capture bonus flags.
  *
  * [INVARIANT] grid is not mutated. A fresh array is returned.
- * [INVARIANT] spawnValue must be a pure function deterministic for the same
- *             (col, spawnIndex) pair — games pass a closure over their PRNG.
+ * [INVARIANT] spawnValue and spawnBonus must be backed by the same underlying
+ *             spawn source — i.e. spawnBonus(col, i) must reflect the bonus
+ *             status of the tile whose value was returned by spawnValue(col, i).
+ *             Callers satisfy this by capturing both fields from the same
+ *             spawnTile() call and providing lookup closures over the cache.
+ * [INVARIANT] spawnBonus is called exactly once per (col, spawnIndex) pair,
+ *             after engineApplyGravity has populated spawnCountPerCol — it is
+ *             a pure lookup, not a PRNG consumer.
  *
  * @param grid        Current board. 0 = cleared/empty cell.
  * @param rows        Row count (must equal grid.length).
  * @param cols        Column count.
  * @param spawnValue  Factory: (col, spawnIndex) → new tile value.
  *                    spawnIndex counts from 0 at the topmost new tile per column.
+ * @param spawnBonus  Factory: (col, spawnIndex) → bonus flag for that tile.
+ *                    Must be a pure lookup into the same spawn data as spawnValue.
  */
 export function applyGravity(
   grid: number[][],
   rows: number,
   cols: number,
   spawnValue: (col: number, spawnIndex: number) => number,
+  spawnBonus: (col: number, spawnIndex: number) => boolean,
 ): GravityApplicationResult {
   // Snapshot the pre-gravity board so we can compute which tiles moved.
   const before: number[][] = grid.map((r) => [...r]);
@@ -120,6 +142,7 @@ export function applyGravity(
   const fallingTiles: FallingTile[] = [];
   const spawnedPositions: SpawnedPosition[] = [];
   const spawnCountPerCol: number[] = Array(cols).fill(0);
+  const spawnBonusMap: boolean[][] = Array.from({ length: cols }, () => []);
 
   for (let c = 0; c < cols; c++) {
     // Count how many new tiles were spawned in this column.
@@ -129,6 +152,12 @@ export function applyGravity(
     // The top `spawnCount` rows in `after` for this column are newly spawned.
     for (let r = 0; r < spawnCount; r++) {
       spawnedPositions.push({ row: r, col: c, value: after[r][c] });
+    }
+
+    // Collect bonus flags for every spawned tile in this column.
+    // spawnBonus is a pure lookup — no PRNG calls here.
+    for (let i = 0; i < spawnCount; i++) {
+      spawnBonusMap[c][i] = spawnBonus(c, i);
     }
 
     // For rows below the spawn zone: if the value changed position, record it.
@@ -159,6 +188,7 @@ export function applyGravity(
     fallingTiles,
     spawnedPositions,
     spawnCountPerCol,
+    spawnBonusMap,
   };
 }
 
@@ -177,6 +207,7 @@ export function clearAndGravity(
   cols: number,
   clearPositions: ReadonlyArray<{ row: number; col: number }>,
   spawnValue: (col: number, spawnIndex: number) => number,
+  spawnBonus: (col: number, spawnIndex: number) => boolean,
 ): GravityApplicationResult {
   // Zero out the cleared positions.
   const cleared = grid.map((r, ri) =>
@@ -184,5 +215,5 @@ export function clearAndGravity(
       clearPositions.some((p) => p.row === ri && p.col === ci) ? 0 : v,
     ),
   );
-  return applyGravity(cleared, rows, cols, spawnValue);
+  return applyGravity(cleared, rows, cols, spawnValue, spawnBonus);
 }

@@ -119,7 +119,11 @@ function resolveGravitySync(
 ): SGState {
   if (state.phase !== 'CLEARING') return state;
 
-  const spawnBonuses: boolean[][] = Array.from({ length: COLS }, () => []);
+  // Cache each SpawnedTile by (col, spawnIndex) so both spawnValue and
+  // spawnBonus callbacks draw from the same spawnTile() call — one PRNG
+  // token per tile, unchanged from before.
+  const spawnCache: { value: number; isBonus: boolean }[][] =
+    Array.from({ length: COLS }, () => []);
 
   const gravResult = applyGravity(
     state.grid,
@@ -127,15 +131,16 @@ function resolveGravitySync(
     COLS,
     (col: number, spawnIndex: number) => {
       const sp = spawnTile(profile, prng);
-      spawnBonuses[col][spawnIndex] = sp.isBonus;
+      spawnCache[col][spawnIndex] = sp;
       return sp.value;
     },
+    (col: number, spawnIndex: number) => spawnCache[col][spawnIndex].isBonus,
   );
 
   const newBonusMask = applyBonusMaskGravity(
     state.bonusMask,
     state.grid,
-    spawnBonuses,
+    gravResult.spawnBonusMap,
     ROWS,
     COLS,
   );
