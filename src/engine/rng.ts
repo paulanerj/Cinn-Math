@@ -64,3 +64,26 @@ export function randomInt(prng: () => number, min: number, max: number): number 
 export function randomPick<T>(prng: () => number, arr: readonly T[]): T {
   return arr[Math.floor(prng() * arr.length)];
 }
+
+/**
+ * Returns a new array with the elements of `arr` in a deterministic random
+ * order, using a Fisher-Yates (Knuth) shuffle driven by `prng`.
+ *
+ * Consumes exactly `arr.length - 1` PRNG calls regardless of array content
+ * or JavaScript engine — call count is portable across V8, SpiderMonkey, etc.
+ * This is the required replacement for `[...arr].sort(() => prng() - 0.5)`,
+ * whose comparator call count is JS-engine-defined and non-deterministic.
+ *
+ * [INVARIANT] arr is not mutated. A fresh array is returned.
+ * [INVARIANT] For arr.length ≤ 1, returns a shallow copy with 0 PRNG calls.
+ */
+export function randomShuffle<T>(prng: () => number, arr: readonly T[]): T[] {
+  const result = [...arr];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(prng() * (i + 1));
+    const tmp = result[i];
+    result[i] = result[j];
+    result[j] = tmp;
+  }
+  return result;
+}

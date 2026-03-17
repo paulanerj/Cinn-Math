@@ -22,7 +22,7 @@
 //             produce no interesting gameplay). The fallback value is 10.
 
 import type { PracticeProfile } from './PracticeProfile';
-import { randomInt } from './rng';
+import { randomInt, randomShuffle } from './rng';
 
 /** The operation used to evaluate a selection of tile values. */
 export type EvalMode = 'sum' | 'product';
@@ -36,8 +36,9 @@ export type EvalMode = 'sum' | 'product';
  * 2. Walk 1–2 random orthogonal neighbours (each non-zero, not already visited).
  * 3. Evaluate the collected values under `mode`.
  * 4. If the result falls within the profile's target range, return it.
- * 5. Otherwise, fall back to a random pair from the full board.
- * 6. If the fallback also fails, return 10.
+ * 5. Otherwise, fall back to the first orthogonally-adjacent pair found in
+ *    a Fisher-Yates-shuffled cell list (guaranteed reachable by a 2-tile chain).
+ * 6. If no adjacent pair exists or all evals are < 2, return 10.
  *
  * This is a direct descendant of findPathForTarget() from the original
  * Cinnamoroll boardUtils.ts, adapted to the GridEngine's number[][] grid type.
@@ -112,12 +113,36 @@ export function generateTarget(
     if (result >= targetMin && result <= targetMax) return result;
   }
 
-  // Step 5: fallback — random pair from the board.
-  const shuffled = [...cells].sort(() => prng() - 0.5);
-  const pair = shuffled.slice(0, 2);
-  if (pair.length === 2) {
-    const fallback = evaluate([pair[0].v, pair[1].v], mode);
-    if (fallback >= 2) return fallback;
+  // Step 5: deterministic adjacent-pair fallback.
+  //
+  // Uses Fisher-Yates (randomShuffle) so PRNG consumption is exactly
+  // cells.length - 1 calls — portable across all JS engines.
+  //
+  // Searches the shuffled order for the first orthogonally-adjacent pair
+  // whose evaluation is ≥ 2, guaranteeing the returned target is reachable
+  // by a valid 2-tile chain. O(n) via a Map lookup for neighbours.
+  //
+  // [SOLVABILITY GUARANTEE] Only returns a value if both tiles are orthogonal
+  // neighbours (|dr|+|dc| === 1), matching the main-path adjacency rule.
+  // A target produced here is always achievable by a length-2 chain.
+  const shuffled = randomShuffle(prng, cells);
+  // Build a position lookup for O(1) orthogonal-neighbour checks.
+  const cellMap = new Map<string, { r: number; c: number; v: number }>();
+  for (const cell of shuffled) cellMap.set(`${cell.r},${cell.c}`, cell);
+  for (const a of shuffled) {
+    const orthoNeighbours = [
+      { r: a.r - 1, c: a.c },
+      { r: a.r + 1, c: a.c },
+      { r: a.r, c: a.c - 1 },
+      { r: a.r, c: a.c + 1 },
+    ];
+    for (const nb of orthoNeighbours) {
+      const b = cellMap.get(`${nb.r},${nb.c}`);
+      if (b) {
+        const fallback = evaluate([a.v, b.v], mode);
+        if (fallback >= 2) return fallback;
+      }
+    }
   }
 
   // Step 6: hard fallback.
