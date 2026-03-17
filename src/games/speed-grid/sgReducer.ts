@@ -1,0 +1,248 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// src/games/speed-grid/sgReducer.ts
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// [ROLE] Pure SpeedGrid game logic: bonus-mask helper, initGame, sgReducer.
+//        Extracted from SpeedGridGame.tsx so the deterministic test harness
+//        can import these functions without pulling in React or any DOM code.
+//
+// [INVARIANT] Zero React imports. No side effects at module level.
+//             SpeedGridGame.tsx imports FROM here — not the other way.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { PracticeProfile } from '../../engine/PracticeProfile';
+import {
+  spawnBoard,
+  gridFromSpawn,
+  generateTarget,
+  evaluate,
+  chainMatchesTarget,
+} from '../../engine/public';
+import {
+  emptyChain,
+  startChain,
+  tryExtend,
+  commitChain,
+  isChainReadyToEvaluate,
+} from '../../systems/ChainSelector';
+import {
+  createTimer,
+  startTimer,
+  tick,
+  isExpired,
+  addTime,
+} from '../../systems/TimerSystem';
+import {
+  createScoreState,
+  calculatePoints,
+  recordMatch,
+  resetCombo,
+} from '../../systems/ScoreSystem';
+import type { SGState, SGAction } from './types';
+import {
+  ROWS,
+  COLS,
+  CHAIN_MIN_LENGTH,
+  ROUND_DURATION_SECS,
+  BONUS_TIME_SECS,
+} from './constants';
+
+// ── Bonus mask gravity ────────────────────────────────────────────────────────
+
+/**
+ * Applies the same column-compaction logic as GravitySystem to the bonus mask.
+ * Called in the CLEARING effect after gravity so bonus status follows its tile.
+ *
+ * Algorithm (per column):
+ *   1. Collect surviving tile bonus values bottom-to-top (preGravGrid[r][c] !== 0).
+ *   2. Place them at the bottom of the new mask (mirrors gravity compaction).
+ *   3. Fill remaining top rows with spawn bonuses from spawnBonuses[col][idx].
+ */
+export function applyBonusMaskGravity(
+  oldMask: boolean[][],
+  preGravGrid: number[][],
+  spawnBonuses: boolean[][],
+  rows: number,
+  cols: number,
+): boolean[][] {
+  const newMask: boolean[][] = Array.from({ length: rows }, () =>
+    Array(cols).fill(false),
+  );
+
+  for (let c = 0; c < cols; c++) {
+    const surviving: boolean[] = [];
+    for (let r = rows - 1; r >= 0; r--) {
+      if (preGravGrid[r][c] !== 0) {
+        surviving.push(oldMask[r][c]);
+      }
+    }
+    for (let i = 0; i < surviving.length; i++) {
+      newMask[rows - 1 - i][c] = surviving[i];
+    }
+    const spawnCount = rows - surviving.length;
+    const colSpawns = spawnBonuses[c] ?? [];
+    for (let i = 0; i < spawnCount; i++) {
+      newMask[i][c] = colSpawns[i] ?? false;
+    }
+  }
+
+  return newMask;
+}
+
+// ── initGame ──────────────────────────────────────────────────────────────────
+
+/**
+ * Produces the initial SGState for a new or restarted session.
+ * Not a reducer — called once at mount and once per Play Again.
+ * Advances `prng` by (ROWS * COLS * 2) + target-generation calls.
+ */
+export function initGame(
+  profile: PracticeProfile,
+  prng: () => number,
+): SGState {
+  const spawnedTiles = spawnBoard(ROWS, COLS, profile, prng);
+  const grid = gridFromSpawn(ROWS, COLS, spawnedTiles);
+  const bonusMask: boolean[][] = Array.from({ length: ROWS }, (_, r) =>
+    Array.from({ length: COLS }, (_, c) => spawnedTiles[r * COLS + c].isBonus),
+  );
+  const target = generateTarget(grid, ROWS, COLS, 'sum', profile, prng);
+
+  return {
+    phase: 'WAITING_TO_START',
+    grid,
+    bonusMask,
+    chain: emptyChain(),
+    target,
+    mode: 'sum',
+    timer: createTimer(ROUND_DURATION_SECS, 'countdown'),
+    score: createScoreState(),
+    chainsCompleted: 0,
+    bonusesCollected: 0,
+    wrongFlash: false,
+  };
+}
+
+// ── Reducer ───────────────────────────────────────────────────────────────────
+
+export function sgReducer(state: SGState, action: SGAction): SGState {
+  switch (action.type) {
+
+    case 'CHAIN_START': {
+      if (state.phase === 'WAITING_TO_START') {
+        return {
+          ...state,
+          phase: 'PLAYING',
+          timer: startTimer(state.timer),
+          chain: startChain(action.pos),
+        };
+      }
+      if (state.phase === 'PLAYING') {
+        return { ...state, chain: startChain(action.pos) };
+      }
+      return state;
+    }
+
+    case 'CHAIN_EXTEND': {
+      if (state.phase !== 'PLAYING' && state.phase !== 'WAITING_TO_START')
+        return state;
+      if (!state.chain.isActive) return state;
+      const newChain = tryExtend(state.chain, action.pos);
+      if (newChain === state.chain) return state;
+      return { ...state, chain: newChain };
+    }
+
+    case 'CHAIN_COMMIT': {
+      if (state.phase !== 'PLAYING') return state;
+
+      const committed = commitChain(state.chain);
+
+      // Too short — silently cancel.
+      if (!isChainReadyToEvaluate(committed, CHAIN_MIN_LENGTH)) {
+        return { ...state, chain: emptyChain() };
+      }
+
+      const positions = committed.positions;
+      const values = positions.map((p) => state.grid[p.row][p.col]);
+
+      // Wrong answer.
+      if (!chainMatchesTarget(values, state.target, state.mode)) {
+        return {
+          ...state,
+          chain: emptyChain(),
+          score: resetCombo(state.score),
+          wrongFlash: true,
+        };
+      }
+
+      // Valid chain.
+      const bonusCount = positions.filter(
+        (p) => state.bonusMask[p.row][p.col],
+      ).length;
+
+      const basePoints = evaluate(values, state.mode);
+      const points = calculatePoints(basePoints, state.score.comboCount);
+      const newScore = recordMatch(state.score, points);
+
+      let newTimer = state.timer;
+      if (bonusCount > 0) {
+        newTimer = addTime(newTimer, BONUS_TIME_SECS * bonusCount);
+      }
+
+      const cleared = new Set(positions.map((p) => `${p.row},${p.col}`));
+      const newGrid = state.grid.map((row, ri) =>
+        row.map((v, ci) => (cleared.has(`${ri},${ci}`) ? 0 : v)),
+      );
+      const newBonusMask = state.bonusMask.map((row, ri) =>
+        row.map((v, ci) => (cleared.has(`${ri},${ci}`) ? false : v)),
+      );
+
+      return {
+        ...state,
+        phase: 'CLEARING',
+        grid: newGrid,
+        bonusMask: newBonusMask,
+        chain: emptyChain(),
+        score: newScore,
+        timer: newTimer,
+        chainsCompleted: state.chainsCompleted + 1,
+        bonusesCollected: state.bonusesCollected + bonusCount,
+      };
+    }
+
+    case 'TICK': {
+      if (state.phase !== 'PLAYING') return state;
+      const newTimer = tick(state.timer);
+      if (isExpired(newTimer)) {
+        return {
+          ...state,
+          timer: newTimer,
+          phase: 'GAME_OVER',
+          chain: emptyChain(),
+        };
+      }
+      return { ...state, timer: newTimer };
+    }
+
+    case 'GRAVITY_DONE': {
+      if (state.phase !== 'CLEARING') return state;
+      return {
+        ...state,
+        phase: 'PLAYING',
+        grid: action.grid,
+        bonusMask: action.bonusMask,
+        target: action.target,
+      };
+    }
+
+    case 'CLEAR_WRONG_FLASH': {
+      return { ...state, wrongFlash: false };
+    }
+
+    case 'PLAY_AGAIN': {
+      return action.newState;
+    }
+
+    default:
+      return state;
+  }
+}

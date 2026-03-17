@@ -47,44 +47,56 @@ import React, {
   useState,
 } from 'react';
 
+// ── Phase-7 telemetry helper (pure) ──────────────────────────────────────────
+
+/** O(ROWS·COLS·8) Chebyshev solvability scan. Used by debug overlay. */
+function boardHasTwoTileSolution(
+  grid: number[][],
+  target: number,
+  rows: number,
+  cols: number,
+): boolean {
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (grid[r][c] === 0) continue;
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const r2 = r + dr, c2 = c + dc;
+          if (r2 < 0 || r2 >= rows || c2 < 0 || c2 >= cols) continue;
+          if (grid[r2][c2] === 0) continue;
+          if (grid[r][c] + grid[r2][c2] === target) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 // ── Engine imports (via public barrel) ───────────────────────────────────────
 import {
   makePrng,
   randomSeed,
-  spawnBoard,
   spawnTile,
-  gridFromSpawn,
   generateTarget,
   evaluate,
-  chainMatchesTarget,
   getProfile,
   DEFAULT_PROFILE_ID,
 } from '../../engine/public';
 
+// ── Reducer + initGame (pure, extracted for testability) ─────────────────────
+import {
+  initGame,
+  sgReducer,
+  applyBonusMaskGravity,
+} from './sgReducer';
+
 // ── System imports ────────────────────────────────────────────────────────────
 import {
-  emptyChain,
-  startChain,
-  tryExtend,
-  commitChain,
-  isChainReadyToEvaluate,
-} from '../../systems/ChainSelector';
-import {
-  createTimer,
-  startTimer,
-  tick,
-  isExpired,
   isInWarningZone,
   countdownProgress,
-  addTime,
 } from '../../systems/TimerSystem';
-import {
-  createScoreState,
-  calculatePoints,
-  recordMatch,
-  resetCombo,
-  nextMultiplier,
-} from '../../systems/ScoreSystem';
+import { nextMultiplier } from '../../systems/ScoreSystem';
 import { applyGravity } from '../../systems/GravitySystem';
 import {
   buildGravityFrames,
@@ -105,8 +117,6 @@ import {
   COLS,
   CHAIN_MIN_LENGTH,
   TIMER_WARNING_SECS,
-  ROUND_DURATION_SECS,
-  BONUS_TIME_SECS,
 } from './constants';
 import {
   HUD_TOP_H,
@@ -122,233 +132,7 @@ import ResultScreen from './components/ResultScreen';
 const ICON_BACK =
   'M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z';
 
-// ── Bonus mask helpers ────────────────────────────────────────────────────────
-
-/**
- * Applies the same column-compaction logic as GravitySystem to the bonus mask.
- * Called in the CLEARING effect after gravity so bonus status follows its tile.
- *
- * Algorithm (per column):
- *   1. Collect surviving tile bonus values bottom-to-top (grid[r][c] !== 0 = surviving).
- *   2. Place them at the bottom of the new mask (mirrors gravity compaction).
- *   3. Fill remaining top rows with spawn bonus values from spawnBonuses[col][spawnIdx].
- *
- * @param oldMask     bonusMask from state — has false at cleared positions.
- * @param preGravGrid The grid with 0s at cleared positions (pre-gravity, from reducer).
- * @param spawnBonuses [col][spawnIndex] → whether that newly spawned tile is bonus.
- * @param rows        ROWS constant.
- * @param cols        COLS constant.
- */
-function applyBonusMaskGravity(
-  oldMask: boolean[][],
-  preGravGrid: number[][],
-  spawnBonuses: boolean[][],
-  rows: number,
-  cols: number,
-): boolean[][] {
-  const newMask: boolean[][] = Array.from({ length: rows }, () =>
-    Array(cols).fill(false),
-  );
-
-  for (let c = 0; c < cols; c++) {
-    // Collect surviving bonus values bottom-to-top (non-zero cells survived).
-    const surviving: boolean[] = [];
-    for (let r = rows - 1; r >= 0; r--) {
-      if (preGravGrid[r][c] !== 0) {
-        surviving.push(oldMask[r][c]);
-      }
-    }
-    // surviving[0] = bottom-most surviving tile; surviving[n-1] = topmost.
-    // Place them at the bottom of the new column.
-    for (let i = 0; i < surviving.length; i++) {
-      newMask[rows - 1 - i][c] = surviving[i];
-    }
-
-    // Fill top rows with spawn bonuses.
-    const spawnCount = rows - surviving.length;
-    const colSpawns = spawnBonuses[c] ?? [];
-    for (let i = 0; i < spawnCount; i++) {
-      newMask[i][c] = colSpawns[i] ?? false;
-    }
-  }
-
-  return newMask;
-}
-
-// ── initGame ─────────────────────────────────────────────────────────────────
-
-/**
- * Produces the initial SGState for a new or restarted session.
- * Called once at mount and once per Play Again with a fresh PRNG.
- * Not a reducer — lives outside so it can access prng directly.
- */
-function initGame(
-  profile: ReturnType<typeof getProfile>,
-  prng: () => number,
-): SGState {
-  const spawnedTiles = spawnBoard(ROWS, COLS, profile, prng);
-  const grid = gridFromSpawn(ROWS, COLS, spawnedTiles);
-  // Build the initial bonus mask from the spawn result.
-  const bonusMask: boolean[][] = Array.from({ length: ROWS }, (_, r) =>
-    Array.from({ length: COLS }, (_, c) => spawnedTiles[r * COLS + c].isBonus),
-  );
-  const target = generateTarget(grid, ROWS, COLS, 'sum', profile, prng);
-
-  return {
-    phase: 'WAITING_TO_START',
-    grid,
-    bonusMask,
-    chain: emptyChain(),
-    target,
-    mode: 'sum',
-    timer: createTimer(ROUND_DURATION_SECS, 'countdown'),
-    score: createScoreState(),
-    chainsCompleted: 0,
-    bonusesCollected: 0,
-    wrongFlash: false,
-  };
-}
-
-// ── Reducer ───────────────────────────────────────────────────────────────────
-
-function sgReducer(state: SGState, action: SGAction): SGState {
-  switch (action.type) {
-    // ── Chain events ──────────────────────────────────────────────────────────
-
-    case 'CHAIN_START': {
-      // First gesture while waiting: start the timer simultaneously.
-      if (state.phase === 'WAITING_TO_START') {
-        return {
-          ...state,
-          phase: 'PLAYING',
-          timer: startTimer(state.timer),
-          chain: startChain(action.pos),
-        };
-      }
-      if (state.phase === 'PLAYING') {
-        return { ...state, chain: startChain(action.pos) };
-      }
-      return state;
-    }
-
-    case 'CHAIN_EXTEND': {
-      if (state.phase !== 'PLAYING' && state.phase !== 'WAITING_TO_START')
-        return state;
-      if (!state.chain.isActive) return state;
-      const newChain = tryExtend(state.chain, action.pos);
-      // Bail early if chain didn't change (pointer still over same tile).
-      if (newChain === state.chain) return state;
-      return { ...state, chain: newChain };
-    }
-
-    case 'CHAIN_COMMIT': {
-      if (state.phase !== 'PLAYING') return state;
-
-      // Mark chain as inactive — positions remain for evaluation.
-      const committed = commitChain(state.chain);
-
-      // Too short — silently cancel.
-      if (!isChainReadyToEvaluate(committed, CHAIN_MIN_LENGTH)) {
-        return { ...state, chain: emptyChain() };
-      }
-
-      const positions = committed.positions;
-      const values = positions.map((p) => state.grid[p.row][p.col]);
-
-      // Wrong answer.
-      if (!chainMatchesTarget(values, state.target, state.mode)) {
-        return {
-          ...state,
-          chain: emptyChain(),
-          score: resetCombo(state.score),
-          wrongFlash: true,
-        };
-      }
-
-      // Valid chain ─────────────────────────────────────────────────────────
-
-      const bonusCount = positions.filter(
-        (p) => state.bonusMask[p.row][p.col],
-      ).length;
-
-      const basePoints = evaluate(values, state.mode);
-      const points = calculatePoints(basePoints, state.score.comboCount);
-      const newScore = recordMatch(state.score, points);
-
-      // Award bonus time for each bonus tile in the chain.
-      let newTimer = state.timer;
-      if (bonusCount > 0) {
-        newTimer = addTime(newTimer, BONUS_TIME_SECS * bonusCount);
-      }
-
-      // Zero out cleared positions in grid and bonus mask so the CLEARING
-      // effect can call applyGravity() directly on the already-cleared grid.
-      const cleared = new Set(positions.map((p) => `${p.row},${p.col}`));
-      const newGrid = state.grid.map((row, ri) =>
-        row.map((v, ci) => (cleared.has(`${ri},${ci}`) ? 0 : v)),
-      );
-      const newBonusMask = state.bonusMask.map((row, ri) =>
-        row.map((v, ci) => (cleared.has(`${ri},${ci}`) ? false : v)),
-      );
-
-      return {
-        ...state,
-        phase: 'CLEARING',
-        grid: newGrid,
-        bonusMask: newBonusMask,
-        chain: emptyChain(),
-        score: newScore,
-        timer: newTimer,
-        chainsCompleted: state.chainsCompleted + 1,
-        bonusesCollected: state.bonusesCollected + bonusCount,
-      };
-    }
-
-    // ── Timer ─────────────────────────────────────────────────────────────────
-
-    case 'TICK': {
-      if (state.phase !== 'PLAYING') return state;
-      const newTimer = tick(state.timer);
-      if (isExpired(newTimer)) {
-        return {
-          ...state,
-          timer: newTimer,
-          phase: 'GAME_OVER',
-          chain: emptyChain(),
-        };
-      }
-      return { ...state, timer: newTimer };
-    }
-
-    // ── Gravity resolved ──────────────────────────────────────────────────────
-
-    case 'GRAVITY_DONE': {
-      if (state.phase !== 'CLEARING') return state;
-      return {
-        ...state,
-        phase: 'PLAYING',
-        grid: action.grid,
-        bonusMask: action.bonusMask,
-        target: action.target,
-      };
-    }
-
-    // ── UI feedback ───────────────────────────────────────────────────────────
-
-    case 'CLEAR_WRONG_FLASH': {
-      return { ...state, wrongFlash: false };
-    }
-
-    // ── Restart ───────────────────────────────────────────────────────────────
-
-    case 'PLAY_AGAIN': {
-      return action.newState;
-    }
-
-    default:
-      return state;
-  }
-}
+// (initGame, sgReducer, applyBonusMaskGravity imported from ./sgReducer)
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -482,6 +266,21 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
     }, 600);
     return () => clearTimeout(id);
   }, [state.wrongFlash]);
+
+  // ── Telemetry overlay (Ctrl+Shift+D) ──────────────────────────────────────
+
+  const [showTelemetry, setShowTelemetry] = useState(false);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+        e.preventDefault();
+        setShowTelemetry((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   // ── Play Again ─────────────────────────────────────────────────────────────
 
@@ -689,6 +488,58 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
           phase={state.phase}
         />
       </div>
+
+      {/* ── Telemetry overlay (Ctrl+Shift+D) ───────────────────────────── */}
+      {showTelemetry && (
+        <div
+          style={{
+            position: 'absolute',
+            top: HUD_TOP_H + 4,
+            right: 8,
+            background: 'rgba(0,0,0,0.82)',
+            color: '#a3e635',
+            fontSize: 11,
+            fontFamily: 'monospace',
+            padding: '8px 10px',
+            borderRadius: 6,
+            lineHeight: 1.6,
+            pointerEvents: 'none',
+            zIndex: 999,
+            minWidth: 200,
+          }}
+        >
+          <div style={{ color: '#facc15', fontWeight: 700, marginBottom: 4 }}>
+            ◈ SpeedGrid Telemetry
+          </div>
+          <div>phase: <b>{state.phase}</b></div>
+          <div>target: <b>{state.target}</b></div>
+          <div>
+            timer: <b>{state.timer.remainingSeconds.toFixed(1)}s</b>
+            {' '}({(countdownProgress(state.timer) * 100).toFixed(0)}%)
+          </div>
+          <div>score: <b>{state.score.score}</b></div>
+          <div>combo: <b>{state.score.comboCount}</b></div>
+          <div>chains: <b>{state.chainsCompleted}</b></div>
+          <div>bonuses: <b>{state.bonusesCollected}</b></div>
+          <div>
+            chain len: <b>{state.chain.positions.length}</b>
+            {state.chain.isActive ? ' (active)' : ' (idle)'}
+          </div>
+          <div>
+            2-tile solution:{' '}
+            <b style={{
+              color: boardHasTwoTileSolution(state.grid, state.target, ROWS, COLS)
+                ? '#a3e635' : '#ef4444',
+            }}>
+              {boardHasTwoTileSolution(state.grid, state.target, ROWS, COLS)
+                ? 'YES' : 'NO'}
+            </b>
+          </div>
+          <div style={{ color: '#64748b', marginTop: 4, fontSize: 10 }}>
+            Ctrl+Shift+D to hide
+          </div>
+        </div>
+      )}
 
       {/* ── HUD Bottom ──────────────────────────────────────────────────── */}
       <HUDBottomBar>
