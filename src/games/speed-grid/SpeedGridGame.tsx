@@ -134,6 +134,18 @@ const ICON_BACK =
 
 // (initGame, sgReducer, applyBonusMaskGravity imported from ./sgReducer)
 
+// ── Telemetry types (module-level) ────────────────────────────────────────────
+interface TelemetryEntry { type: string; ms: number }
+interface PhaseEntry { from: SGState['phase']; to: SGState['phase']; ms: number }
+interface TelemetryLog {
+  actions: TelemetryEntry[];
+  phases: PhaseEntry[];
+  gravityEvents: number;
+  spawnEvents: number;
+  timerStartOrigin: string;
+}
+type FrozenSnap = TelemetryLog & { sgState: SGState };
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface SpeedGridGameProps {
@@ -148,7 +160,7 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
 
   // ── Reducer ────────────────────────────────────────────────────────────────
 
-  const [state, dispatch] = useReducer(
+  const [state, rawDispatch] = useReducer(
     sgReducer,
     undefined,
     () => initGame(profile, prngRef.current),
@@ -158,6 +170,42 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
   // listing every field as a dependency.
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  // ── Telemetry tracking (refs — zero cost when overlay is hidden) ───────────
+
+  const telemetryRef = useRef<TelemetryLog>({
+    actions: [],
+    phases: [],
+    gravityEvents: 0,
+    spawnEvents: 0,
+    timerStartOrigin: 'none',
+  });
+
+  // Telemetry-aware dispatch wrapper. Wraps rawDispatch so all dispatch
+  // call sites are unchanged while logging every action to telemetryRef.
+  const dispatch = useCallback((action: SGAction) => {
+    const log = telemetryRef.current;
+    log.actions.push({ type: action.type, ms: Date.now() % 100000 });
+    if (log.actions.length > 30) log.actions.shift();
+    if (
+      action.type === 'CHAIN_START' &&
+      stateRef.current.phase === 'WAITING_TO_START'
+    ) {
+      log.timerStartOrigin = `CHAIN_START in WAITING_TO_START`;
+    }
+    rawDispatch(action);
+  }, [rawDispatch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Phase transition tracker — runs after every render, O(1) work.
+  const prevPhaseRef = useRef<SGState['phase']>(state.phase);
+  useEffect(() => {
+    if (state.phase !== prevPhaseRef.current) {
+      const log = telemetryRef.current;
+      log.phases.push({ from: prevPhaseRef.current, to: state.phase, ms: Date.now() % 100000 });
+      if (log.phases.length > 10) log.phases.shift();
+      prevPhaseRef.current = state.phase;
+    }
+  });
 
   // ── Tile size ──────────────────────────────────────────────────────────────
 
@@ -211,6 +259,13 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
         spawnBonuses[col][spawnIndex] = sp.isBonus;
         return sp.value;
       },
+    );
+
+    // Telemetry: count gravity event + tiles spawned this cycle.
+    telemetryRef.current.gravityEvents += 1;
+    telemetryRef.current.spawnEvents += spawnBonuses.reduce(
+      (sum, col) => sum + col.length,
+      0,
     );
 
     // Remap bonus mask using same column-compaction as GravitySystem.
@@ -267,15 +322,31 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
     return () => clearTimeout(id);
   }, [state.wrongFlash]);
 
-  // ── Telemetry overlay (Ctrl+Shift+D) ──────────────────────────────────────
+  // ── Telemetry overlay controls ──────────────────────────────────────────────
 
   const [showTelemetry, setShowTelemetry] = useState(false);
+  const [frozen, setFrozen] = useState<FrozenSnap | null>(null);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      // Ctrl+Shift+D — toggle overlay visibility
       if (e.ctrlKey && e.shiftKey && e.key === 'D') {
         e.preventDefault();
         setShowTelemetry((v) => !v);
+      }
+      // Ctrl+Shift+F — freeze / thaw snapshot
+      if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+        e.preventDefault();
+        setFrozen((prev) =>
+          prev
+            ? null
+            : {
+                ...telemetryRef.current,
+                actions: [...telemetryRef.current.actions],
+                phases: [...telemetryRef.current.phases],
+                sgState: stateRef.current,
+              },
+        );
       }
     };
     window.addEventListener('keydown', handleKey);
@@ -490,56 +561,138 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
       </div>
 
       {/* ── Telemetry overlay (Ctrl+Shift+D) ───────────────────────────── */}
-      {showTelemetry && (
-        <div
-          style={{
-            position: 'absolute',
-            top: HUD_TOP_H + 4,
-            right: 8,
-            background: 'rgba(0,0,0,0.82)',
-            color: '#a3e635',
-            fontSize: 11,
-            fontFamily: 'monospace',
-            padding: '8px 10px',
-            borderRadius: 6,
-            lineHeight: 1.6,
-            pointerEvents: 'none',
-            zIndex: 999,
-            minWidth: 200,
-          }}
-        >
-          <div style={{ color: '#facc15', fontWeight: 700, marginBottom: 4 }}>
-            ◈ SpeedGrid Telemetry
+      {showTelemetry && (() => {
+        // When frozen, display snapshot; otherwise display live data.
+        const ds = frozen?.sgState ?? state;
+        const dl = frozen ?? telemetryRef.current;
+        const hasSolution = boardHasTwoTileSolution(ds.grid, ds.target, ROWS, COLS);
+        return (
+          <div
+            style={{
+              position: 'absolute',
+              top: HUD_TOP_H + 4,
+              right: 8,
+              background: 'rgba(0,0,0,0.88)',
+              color: '#a3e635',
+              fontSize: 11,
+              fontFamily: 'monospace',
+              padding: '8px 10px',
+              borderRadius: 6,
+              lineHeight: 1.55,
+              pointerEvents: 'none',
+              zIndex: 999,
+              minWidth: 210,
+              maxHeight: '90vh',
+              overflowY: 'auto',
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ color: '#facc15', fontWeight: 700 }}>◈ SpeedGrid Telemetry</span>
+              {frozen && (
+                <span style={{ color: '#ef4444', fontWeight: 700, fontSize: 10 }}>⊘ FROZEN</span>
+              )}
+            </div>
+
+            {/* ── Reducer phase ─────────────────────────────── */}
+            <div style={{ color: '#64748b', fontSize: 9, marginBottom: 1 }}>REDUCER PHASE</div>
+            <div>phase: <b style={{ color: '#facc15' }}>{ds.phase}</b></div>
+
+            {/* ── Timer ─────────────────────────────────────── */}
+            <div style={{ color: '#64748b', fontSize: 9, marginTop: 4, marginBottom: 1 }}>TIMER</div>
+            <div>
+              remaining: <b>{ds.timer.remainingSeconds.toFixed(1)}s</b>
+              {' '}({(countdownProgress(ds.timer) * 100).toFixed(0)}%)
+            </div>
+            <div>running: <b>{ds.timer.isRunning ? 'yes' : 'no'}</b></div>
+            <div style={{ fontSize: 9, color: '#64748b' }}>
+              origin: {dl.timerStartOrigin}
+            </div>
+
+            {/* ── Target + solvability ──────────────────────── */}
+            <div style={{ color: '#64748b', fontSize: 9, marginTop: 4, marginBottom: 1 }}>TARGET</div>
+            <div>
+              target: <b>{ds.target}</b>{'  '}
+              2-tile:{' '}
+              <b style={{ color: hasSolution ? '#a3e635' : '#ef4444' }}>
+                {hasSolution ? 'YES' : 'NO'}
+              </b>
+            </div>
+
+            {/* ── Score + combo ─────────────────────────────── */}
+            <div style={{ color: '#64748b', fontSize: 9, marginTop: 4, marginBottom: 1 }}>SCORING</div>
+            <div>score: <b>{ds.score.score}</b>{'  '}combo: <b>{ds.score.comboCount}</b></div>
+            <div>chains: <b>{ds.chainsCompleted}</b>{'  '}bonuses: <b>{ds.bonusesCollected}</b></div>
+
+            {/* ── Active chain ──────────────────────────────── */}
+            <div style={{ color: '#64748b', fontSize: 9, marginTop: 4, marginBottom: 1 }}>CHAIN</div>
+            <div>
+              len: <b>{ds.chain.positions.length}</b>
+              {'  '}{ds.chain.isActive ? '(active)' : '(idle)'}
+            </div>
+
+            {/* ── BonusMask live map ────────────────────────── */}
+            <div style={{ color: '#64748b', fontSize: 9, marginTop: 4, marginBottom: 2 }}>
+              BONUS MASK ({ds.bonusMask.flat().filter(Boolean).length} active)
+            </div>
+            <div
+              style={{
+                display: 'inline-grid',
+                gridTemplateColumns: `repeat(${COLS}, 10px)`,
+                gap: 2,
+              }}
+            >
+              {ds.bonusMask.flat().map((v, i) => (
+                <div
+                  key={i}
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 2,
+                    background: v ? '#f97316' : '#1e293b',
+                    border: '1px solid #334155',
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* ── Gravity / spawn events ────────────────────── */}
+            <div style={{ color: '#64748b', fontSize: 9, marginTop: 4, marginBottom: 1 }}>ENGINE EVENTS</div>
+            <div>gravity: <b>{dl.gravityEvents}</b>{'  '}spawns: <b>{dl.spawnEvents}</b></div>
+
+            {/* ── Phase transition log ──────────────────────── */}
+            <div style={{ color: '#64748b', fontSize: 9, marginTop: 4, marginBottom: 1 }}>
+              PHASE LOG (last {dl.phases.length})
+            </div>
+            {dl.phases.length === 0 && (
+              <div style={{ color: '#475569', fontSize: 9 }}>no transitions yet</div>
+            )}
+            {dl.phases.slice(-5).map((p, i) => (
+              <div key={i} style={{ fontSize: 9, color: '#94a3b8' }}>
+                {String(p.ms).padStart(5)} {p.from.slice(0, 4)}→{p.to.slice(0, 4)}
+              </div>
+            ))}
+
+            {/* ── Reducer dispatch log ──────────────────────── */}
+            <div style={{ color: '#64748b', fontSize: 9, marginTop: 4, marginBottom: 1 }}>
+              DISPATCH LOG (last {Math.min(dl.actions.length, 8)})
+            </div>
+            {dl.actions.length === 0 && (
+              <div style={{ color: '#475569', fontSize: 9 }}>no actions yet</div>
+            )}
+            {dl.actions.slice(-8).map((a, i) => (
+              <div key={i} style={{ fontSize: 9, color: '#64748b' }}>
+                {String(a.ms).padStart(5)} {a.type}
+              </div>
+            ))}
+
+            {/* ── Footer ───────────────────────────────────── */}
+            <div style={{ color: '#334155', marginTop: 6, fontSize: 9 }}>
+              Ctrl+Shift+D hide{'  '}|{'  '}Ctrl+Shift+F {frozen ? 'thaw' : 'freeze'}
+            </div>
           </div>
-          <div>phase: <b>{state.phase}</b></div>
-          <div>target: <b>{state.target}</b></div>
-          <div>
-            timer: <b>{state.timer.remainingSeconds.toFixed(1)}s</b>
-            {' '}({(countdownProgress(state.timer) * 100).toFixed(0)}%)
-          </div>
-          <div>score: <b>{state.score.score}</b></div>
-          <div>combo: <b>{state.score.comboCount}</b></div>
-          <div>chains: <b>{state.chainsCompleted}</b></div>
-          <div>bonuses: <b>{state.bonusesCollected}</b></div>
-          <div>
-            chain len: <b>{state.chain.positions.length}</b>
-            {state.chain.isActive ? ' (active)' : ' (idle)'}
-          </div>
-          <div>
-            2-tile solution:{' '}
-            <b style={{
-              color: boardHasTwoTileSolution(state.grid, state.target, ROWS, COLS)
-                ? '#a3e635' : '#ef4444',
-            }}>
-              {boardHasTwoTileSolution(state.grid, state.target, ROWS, COLS)
-                ? 'YES' : 'NO'}
-            </b>
-          </div>
-          <div style={{ color: '#64748b', marginTop: 4, fontSize: 10 }}>
-            Ctrl+Shift+D to hide
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── HUD Bottom ──────────────────────────────────────────────────── */}
       <HUDBottomBar>
