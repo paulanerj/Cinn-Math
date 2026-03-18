@@ -1,0 +1,686 @@
+PHASE-8 TASK-6 — FINAL PRIMITIVE LAW HARDENING
+================================================================================
+
+
+A. PRIMITIVE LAW FINALIZATION
+================================================================================
+
+GRAVITYSYSTEM
+--------------------------------------------------------------------------------
+
+Hard law — NoGapPostGravity
+After applyGravity, no column contains a zero below a non-zero tile. Provable
+from engineApplyGravity compaction. Violation produces floating tiles,
+misaligned bonus masks, and stale target generation.
+=> Must become runtime assertion (dev builds, per-column check at return boundary)
+
+Hard law — SpawnBonusMapLengthParity
+spawnBonusMap[c].length === spawnCountPerCol[c] for every column. Both values
+derive from the same colFills loop. Cannot diverge unless the loop is broken.
+=> Must become runtime assertion (single loop comparison, negligible cost)
+
+Hard law — FallingTileDirection
+fallingTile.toRow > fallingTile.fromRow without exception. Gravity is strictly
+downward. Provable from snapshot comparison direction.
+=> Documentation-only (provable; assertion only if engineApplyGravity is refactored)
+
+Soft law — SpawnCallbackCoordination
+spawnBonus(col, i) must return the bonus flag of the tile whose value was
+returned by spawnValue(col, i). They must share a backing source. The type
+(col, i) => boolean does not encode this.
+=> Must remain documentation-only. Type-encoding requires a combined factory
+object — adds abstraction overhead for two callers. Not justified until a
+third caller appears.
+
+Convention — SpawnIndexOrdering
+spawnIndex 0 = topmost spawned tile in a column. Shared between GravitySystem
+and BonusMaskSystem. Not expressed in any type or assertion.
+=> Must remain documentation-only. Cannot be type-encoded without a newtype.
+Violation is silent and produces inverted bonus assignments across an entire
+gravity cycle.
+
+
+BONUSMASKSYSTEM
+--------------------------------------------------------------------------------
+
+Hard law — FalseAtZero
+result[r][c] === false wherever preGravGrid[r][c] === 0. Provable from the
+survivor-collection loop which excludes zero cells.
+=> Must become runtime assertion (post-computation spot check, dev builds)
+
+Soft law — PreGravityInputSemantic
+The grid passed as preGravGrid must be the pre-gravity snapshot — zeros mark
+cleared positions, not general empties. Nothing in the type prevents a caller
+from passing a post-gravity grid, which would produce silently wrong survivor
+identification.
+=> Must remain documentation-only until BonusMask evolution Stage 3 is
+complete. After Stage 3 the parameter is removed and the law becomes moot.
+
+Convention — SpawnIndexAlignment
+spawnBonuses[c][0] = topmost spawn, matching GravitySystem's convention.
+Shared ordering assumption with no type enforcement.
+=> Must remain documentation-only. Resolved structurally when both primitives
+are co-located in the same module.
+
+
+TARGETGENERATOR
+--------------------------------------------------------------------------------
+
+Hard law — TargetFloor
+generateTarget always returns >= 2. Stage-3 hard fallback (10) is
+unconditional. Stage-1 filters by profile range with minimum >= 2. Stage-2
+finds an adjacent pair whose evaluation is >= 2.
+=> Must become runtime assertion (single comparison at return boundary)
+
+Hard law — Stage2OrthogonalGuarantee
+When Stage-1 fails, Stage-2 guarantees a 2-tile orthogonal adjacent pair
+exists on the board that achieves the returned target. This is a semantic
+property of the search algorithm, not the type system.
+=> Must remain documentation-only. Encoding it in types requires a
+discriminated return type (stage + target). The two-caller context does not
+justify this.
+
+Soft law — Stage1NonGuarantee
+Stage-1 may return a target achievable only by a 3-tile chain.
+boardHasTwoTileSolution returning false does not mean the board is in deadlock
+when Stage-1 ran. Callers conflating Stage-1 results with 2-tile solvability
+will misdiagnose deadlock.
+=> Must remain documentation-only. Structural enforcement would require
+stage-tagging the return value.
+
+Hard law — ChainMatchIsValueBased
+chainMatchesTarget accepts values: number[], not positions. The grid is not
+accessible inside the function. A tile mutation between extend and commit
+cannot affect validation.
+=> Already type-level. The signature enforces it. No further action needed.
+
+
+CHAINENGINE
+--------------------------------------------------------------------------------
+
+Hard law — NoDuplicates
+positions contains no duplicate ChainPos values. tryExtend enforces this: a
+position is appended only if it is not the second-to-last and not already
+present.
+=> Documentation-only (structurally enforced; add assertion only if tryExtend
+is refactored)
+
+Hard law — BacktrackRule
+tryExtend(state, pos) where pos === positions[length-2] removes
+positions[length-1] instead of appending. "Second-to-last" is precise.
+=> Documentation-only (unit test covers all four cases; rule cannot be
+violated without rewriting tryExtend)
+
+Hard law — ReadyToEvaluateDefinition
+isChainReadyToEvaluate(state, n) is definitionally !state.isActive &&
+state.positions.length >= n. Not a heuristic.
+=> Documentation-only (provable from implementation)
+
+Convention — DefaultAdjacencyIsChebyshev
+The default adjacency function is Chebyshev (8-directional). Callers may
+override. Changing the default is a visible behavioral change.
+=> Documentation-only
+
+
+SGREDUCER PURITY BOUNDARY
+--------------------------------------------------------------------------------
+
+Hard law — NoPRNG
+The module imports no PRNG source, calls no random functions, reads no Date.
+Provable from the import list. A violation produces non-determinism.
+=> Module boundary (import list is auditable; add an import-lint rule if the
+codebase grows)
+
+Hard law — GridMaskDimensionParity
+grid.length === bonusMask.length && grid[0].length === bonusMask[0].length in
+every state the reducer produces.
+=> Must become runtime assertion (post-initGame and post-GRAVITY_DONE, dev builds)
+
+Soft law — ClearingLockout
+CHAIN_* and TICK return unchanged state when phase === 'CLEARING'. Correct by
+implementation. The type system allows dispatching any action in any phase.
+=> Must become runtime assertion in dev builds (at top of each locked handler).
+Not type-level: phase-parameterized action types create unjustified coupling
+overhead for a single-game context.
+
+Soft law — GravityDoneExclusiveExit
+GRAVITY_DONE is the only action that transitions CLEARING to PLAYING.
+=> Documentation-only (structural enforcement would require phase-parameterized
+state types)
+
+Soft law — WrongFlashClearanceObligation
+The reducer sets wrongFlash = true and relies on the orchestration layer to
+dispatch CLEAR_WRONG_FLASH after a delay. Any renderer that omits the clearance
+leaves wrongFlash permanently set.
+=> Must remain documentation-only. Behavioral contract on every caller.
+
+
+================================================================================
+B. BONUSMASK EVOLUTION DESIGN
+================================================================================
+
+Current model — zero-inference
+  applyBonusMaskGravity(oldMask, preGravGrid, spawnBonuses, rows, cols)
+
+Cleared positions are inferred: preGravGrid[r][c] === 0 means "this cell was
+cleared." This conflates two distinct facts — "was cleared this cycle" and
+"is currently empty."
+
+Target model — explicit cleared positions
+  applyBonusMaskGravity(oldMask, clearedPositions, spawnBonuses, rows, cols)
+
+clearedPositions is ReadonlyArray<{row: number; col: number}> — the exact set
+of positions cleared this cycle, passed by the caller that knows which chain
+tiles were committed. preGravGrid is removed entirely.
+
+MIGRATION STAGES
+
+Stage 1 — Additive (non-breaking)
+Add clearedPositions as an optional parameter alongside preGravGrid. When
+provided, use it. When absent, fall back to zero-inference. No callers break.
+No behavior changes.
+
+Stage 2 — Caller migration
+Both callers (SpeedGridGame.tsx CLEARING effect and SpeedGridHarness.ts
+resolveGravitySync) already know the cleared positions — they are
+state.chain.positions at CHAIN_COMMIT time. Both callers pass
+clearedPositions explicitly. The zero-inference path becomes dead code.
+
+Stage 3 — Remove preGravGrid (irreversible)
+Remove preGravGrid from the signature. Remove the zero-inference fallback.
+This is a breaking signature change and the irreversible boundary.
+
+BACKWARDS COMPATIBILITY PATH
+Stage 1 is non-breaking. Stage 2 requires callers to pass one additional
+argument. Stage 3 requires the preGravGrid argument to be removed from all
+call sites. Since there are exactly two call sites, the migration surface
+is minimal.
+
+VALIDATION DURING TRANSITION
+During Stage 1, both paths run simultaneously. Assert that zero-inference
+result deepEquals explicit result for every gravity cycle in dev builds. If
+they ever diverge, the explicit path is wrong or a caller is passing incorrect
+clearedPositions. Remove the assertion at Stage 3.
+
+STRUCTURAL RISKS IF NOT EVOLVED
+1. Any tile that is zero for a reason other than chain clearing (obstacle,
+   tutorial gap, editor) is incorrectly treated as a cleared bonus position
+2. Multi-chain clears where a cell is cleared by two simultaneous chains
+   cannot be represented correctly with zero-inference
+3. Board initialization with pre-placed zeros would corrupt the bonus mask
+   on the first gravity cycle
+
+FEATURE UNLOCKS
+- Obstacle tiles with permanent zero values (not cleared, not bonus-eligible)
+- Tutorial boards with pre-placed gaps
+- Board editor mode with manually emptied cells
+- Multi-chain simultaneous clear (passes union of cleared positions)
+- Zero-value tiles (if ever introduced as a game mechanic)
+
+
+================================================================================
+C. MULTI-CHAIN / MULTI-POINTER FORECAST
+================================================================================
+
+Forward architecture only. Nothing below is an implementation instruction.
+
+REDUCER STATE SHAPE EVOLUTION
+
+SGState.chain: ChainState
+becomes
+SGState.chains: ReadonlyMap<number, ChainState>
+where the key is a pointer ID (touch identifier or mouse button ID).
+
+SGState.pendingClearCount: number — tracks committed chains whose gravity has
+not yet resolved. Replaces the binary phase === 'CLEARING' trigger for gravity.
+
+No other SGState fields change. grid, bonusMask, target, score, timer, mode
+are unaffected.
+
+PHASE SEMANTICS IMPACT
+
+Currently: a single commit triggers CLEARING which blocks all chain input.
+
+Under multi-chain: a commit clears that pointer's chain from chains and
+increments pendingClearCount. The board phase remains PLAYING — other pointers
+continue extending their chains. When pendingClearCount > 0 and
+chains.size === 0 (all pointers have lifted), the phase transitions to
+CLEARING. Gravity runs once against the union of all cleared positions.
+
+The CLEARING lockout remains intact — no chain input during gravity animation.
+The only change is when CLEARING is entered: deferred until all concurrent
+chains are resolved.
+
+GRAVITY TRIGGER REDESIGN
+
+Currently: CHAIN_COMMIT (valid) => phase = CLEARING immediately.
+
+Under multi-chain: CHAIN_COMMIT (valid) => remove from chains, accumulate
+cleared positions in pendingClears. When chains.size === 0 => phase =
+CLEARING, pass pendingClears union to orchestrator. GRAVITY_DONE => phase =
+PLAYING, clear pendingClears.
+
+GravitySystem is unchanged. It receives the union-cleared grid in one call.
+
+MODE-CONFIGURABLE CONCURRENCY LIMIT
+PracticeProfile.maxConcurrentChains: number. The reducer rejects CHAIN_START
+when chains.size >= maxConcurrentChains. Value of 1 reproduces current
+single-chain behavior exactly.
+
+SCORING AGGREGATION
+Each CHAIN_COMMIT scores its chain independently at commit time. Combo logic
+applies per-chain in commit order. Bonus tile collection is credited at commit
+time based on the chain's positions against the current bonusMask. The final
+bonusMask after gravity reflects all chains' clears — correct because
+BonusMaskSystem uses the union of cleared positions.
+
+
+================================================================================
+D. ENGINE EXTRACTION SEQUENCE
+================================================================================
+
+STEP 1 — ChainEngine
+
+Prerequisite: File-move constraint lifted.
+Safe trigger: No further architectural changes needed. ChainEngine is R1 —
+zero external dependencies.
+Hazard if done early: None. This extraction has no downstream risk.
+Irreversible boundary: The moment sgReducer.ts imports from
+src/systems/ChainEngine.ts instead of ChainSelector.ts. After this,
+ChainSelector.ts is dead. Do not maintain both.
+
+STEP 2 — BonusMaskSystem
+
+Prerequisite: File-move constraint lifted. applyBonusMaskGravity has no
+circular dependency on sgReducer.ts internals.
+Safe trigger: Immediately after Step 1, or in parallel with it.
+Hazard if done early: None. The function is already self-contained.
+Irreversible boundary: Removal of applyBonusMaskGravity from sgReducer.ts.
+After this, sgReducer.ts has no bonus mask knowledge. The function lives in
+src/systems/BonusMaskSystem.ts.
+
+STEP 3 — TargetSolvability utilities
+
+Prerequisite: HC-3 resolved — boardHasTwoTileSolution moved from
+SpeedGridGame.tsx to src/engine/TargetGenerator.ts (or SolvabilityUtils.ts),
+with mode parameter added. findAdjacentPairForTarget in harness replaced
+with an import.
+Safe trigger: After HC-3 resolution is confirmed.
+Hazard if done early: Exporting boardHasTwoTileSolution to the public barrel
+before the mode parameter is added creates a breaking signature change on
+the next correction.
+Irreversible boundary: Adding boardHasTwoTileSolution to
+src/engine/public.ts. After this, the signature is public API.
+
+STEP 4 — GravityOrchestrator
+
+Prerequisite: BonusMaskSystem extracted (Step 2). The orchestrator imports
+BonusMaskSystem — if BonusMaskSystem is still in sgReducer.ts, the
+orchestrator would import a game-specific file, creating cross-game coupling.
+Safe trigger: BonusMaskSystem is at a stable, non-game-specific path.
+Hazard if done early: If extracted before Step 2, the orchestrator must
+import from sgReducer.ts, creating an architectural inversion — a
+system-level primitive depending on a game-specific module.
+Irreversible boundary: The moment the CLEARING effect in SpeedGridGame.tsx
+no longer contains the pipeline inline and resolveGravitySync in the harness
+imports from GravityOrchestrator.ts.
+
+STEP 5 — Reducer Lifecycle Contract documentation
+
+Prerequisite: All four extractions complete. The reducer's dependencies are
+now clean, stable module references.
+Safe trigger: Last, after all code moves are complete and settled.
+Hazard if done early: Documenting the lifecycle contract before the
+dependency graph is stable means the contract immediately diverges from
+reality.
+Irreversible boundary: None. This is a documentation artifact.
+
+
+================================================================================
+E. DETERMINISTIC REPLAY SPECIFICATION
+================================================================================
+
+MINIMAL RECORDED INPUTS
+
+1. Seed — the single integer passed to makePrng at game start. Reproduces
+   the entire tile and target sequence.
+2. Action stream — the ordered sequence of SGAction values dispatched.
+   For each action: type and elapsed milliseconds from game start (not
+   wall-clock time).
+3. New seeds — PLAY_AGAIN starts a new game with a new seed via randomSeed().
+   Each new seed must be recorded as part of the session.
+
+A replay session is a sequence of (seed, actionStream) pairs — one pair per
+game in the session.
+
+FORBIDDEN RECORDED STATE
+- Grid values — fully derived from seed + action stream
+- PRNG state — fully derived from seed + number of PRNG calls consumed
+- GRAVITY_DONE payloads — computed, not input
+- CLEAR_WRONG_FLASH — derived from CHAIN_COMMIT timing
+- Animation frames — presentation layer
+- bonusMask snapshots — derived from gravity cycles
+
+Recording any of these creates redundant state that could diverge from what
+the engine re-derives, making replay validation ambiguous.
+
+SEED LIFECYCLE MODEL
+- Session start: randomSeed() => seed_0 => recorded
+- PLAY_AGAIN: randomSeed() => seed_1 => recorded
+- Each seed_n is the sole entropy source for game n
+- makePrng(seed_n) reproduces the exact PRNG sequence for game n
+
+ACTION STREAM SEMANTICS
+Actions are recorded at dispatch time — before reducer processing. They
+represent player intent, not engine response. The engine response is always
+re-derived. Timestamps are elapsed milliseconds from first action (CHAIN_START
+in WAITING_TO_START). This makes replay speed-independent. TICK count and
+order are what matter — not wall-clock TICK timing.
+
+GRAVITY RESOLUTION REPLAY RULE
+In replay mode: after every valid CHAIN_COMMIT, resolveGravitySync is called
+directly. The setTimeout animation delay is skipped. GRAVITY_DONE is produced
+synchronously. This is correct because GRAVITY_DONE payload is derived from
+the PRNG sequence, not from animation timing.
+
+The replay engine is the harness, not the component. The component adds
+setTimeout for animation — this is orthogonal to correctness.
+
+SNAPSHOT VALIDATION CHECKPOINTS
+
+1. Post-initGame — record { grid, bonusMask, target }. Replay must match.
+2. Post-GRAVITY_DONE — record { grid, bonusMask, target } after every gravity
+   resolution. Replay must match.
+3. Post-GAME_OVER — record { score.score, chainsCompleted, bonusesCollected }.
+   Replay must match.
+
+These three points detect all meaningful divergence without recording
+mid-chain state.
+
+DIVERGENCE DETECTION MECHANISM
+A replay diverges at checkpoint N but not N-1. The divergence is always
+localized to the gravity cycle between the two checkpoints — specifically to
+PRNG consumption during spawnTile or generateTarget calls in that cycle.
+
+Diagnostic: compare spawnCountPerCol between original and replay for the
+diverging cycle. If they match, the PRNG consumption was identical for tile
+spawning — divergence is in generateTarget's stochastic path variability.
+If they do not match, a tile spawn consumed an unexpected number of PRNG
+tokens.
+
+
+================================================================================
+F. ENTROPY BOUNDARY AUDIT
+================================================================================
+
+Entry 1 — randomSeed() at component mount
+Classification: LAWFUL BOUNDARY
+Root entropy source. One call per session. Seeds the PRNG that all downstream
+calls consume. Fully recorded in the replay model.
+
+Entry 2 — spawnTile(profile, prngRef.current) in CLEARING effect
+Classification: LAWFUL BOUNDARY
+Consumes exactly two PRNG tokens per call (one for tile value, one for bonus
+flag). Call count per gravity cycle equals the number of zeros in the
+pre-gravity grid — deterministic given the board state. The spawnCache ensures
+each (col, spawnIndex) pair consumes exactly two tokens once.
+
+Risk within lawful: If spawnTile is refactored to consume one or three tokens
+instead of two, the entire downstream PRNG sequence shifts silently. No type
+or assertion detects this. The PRNG token consumption count of spawnTile is
+itself an undocumented contract.
+
+Entry 3 — generateTarget(...) in CLEARING effect
+Classification: RISKY BOUNDARY
+Stage-1 consumes a variable number of PRNG tokens — up to 20 attempts times
+tokens-per-attempt. The exact count depends on how many attempts fail before
+a valid target is found, which depends on the board state. Stage-2 consumes
+tokens via randomShuffle. The total token consumption per generateTarget call
+is bounded but not constant.
+
+Risk: Replay must consume the PRNG in the same order as the original run.
+Since generateTarget's path is fully determined by the board state (which is
+deterministic given the seed), this is safe in practice. The risk is that
+this variability is invisible — a developer who accidentally adds a prng()
+call inside Stage-1 would silently corrupt all downstream state.
+
+Entry 4 — randomSeed() in handlePlayAgain
+Classification: LAWFUL BOUNDARY
+Re-seeds the PRNG for each new game. Intentional entropy — each play-again
+must produce a different board. Recorded in the replay session model.
+
+Entry 5 — Date.now() % 100000 in telemetry dispatch wrapper
+Classification: INERT
+Never enters SGState. Never flows into the reducer. Not entropy from the
+engine's perspective. Present only in the telemetry log.
+
+FORBIDDEN FUTURE BOUNDARIES
+
+Forbidden-1 — Any prng() call inside sgReducer
+Absolute. Breaks determinism. Breaks harness. Breaks replay. Unrecoverable
+without a full reducer redesign.
+
+Forbidden-2 — Math.random() in any state-producing path
+Unseeded. Non-reproducible. Any presence in code that produces SGState fields
+makes the game non-replayable.
+
+Forbidden-3 — Date.now() in any state-producing path
+Date.now() used to compute a SGState value makes the game non-replayable.
+Date.now() used only to decide when to dispatch an action (timer effect) is
+fine — the TICK action itself carries no timestamp.
+
+Forbidden-4 — PRNG ownership inside GravitySystem
+applyGravity currently has no PRNG. The randomness enters via the spawnValue
+callback, which is caller-supplied. If anyone adds an internal PRNG to
+GravitySystem, the determinism guarantee collapses because the internal PRNG
+would not be seeded from prngRef.
+
+
+================================================================================
+G. PRIMITIVE LAW REGISTER (CANONICAL FORMAT)
+================================================================================
+
+PRIMITIVE:    GravitySystem
+LAW NAME:     NoGapPostGravity
+STATUS:       frozen
+STATEMENT:    After applyGravity, no column contains a zero below a non-zero
+              tile.
+CONSEQUENCE:  Floating tiles. Bonus mask aligned to wrong rows. Target
+              generated from a broken board state.
+ENFORCEMENT:  runtime (dev builds, per-column check at return)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    GravitySystem
+LAW NAME:     SpawnBonusMapLengthParity
+STATUS:       frozen
+STATEMENT:    spawnBonusMap[c].length === spawnCountPerCol[c] for every
+              column c without exception.
+CONSEQUENCE:  applyBonusMaskGravity indexes out-of-bounds or silently
+              misassigns bonus flags to wrong tiles.
+ENFORCEMENT:  runtime (single comparison loop at return boundary)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    GravitySystem
+LAW NAME:     SpawnIndexZeroIsTopmost
+STATUS:       frozen
+STATEMENT:    spawnIndex 0 identifies the topmost spawned tile in a column.
+              Index N-1 identifies the bottommost.
+CONSEQUENCE:  BonusMaskSystem assigns bonus flags to inverted row positions.
+              Silent corruption, no crash.
+ENFORCEMENT:  docs (shared convention; cannot be type-encoded)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    GravitySystem
+LAW NAME:     SpawnCallbackCoordination
+STATUS:       soft
+STATEMENT:    spawnBonus(col, i) must return the bonus flag of the tile whose
+              value was returned by spawnValue(col, i). Both must share the
+              same backing spawn source.
+CONSEQUENCE:  Bonus flags assigned to tiles they do not belong to.
+              bonusesCollected counter corrupts silently.
+ENFORCEMENT:  docs (type system cannot encode shared source)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    BonusMaskSystem
+LAW NAME:     FalseAtZero
+STATUS:       frozen
+STATEMENT:    result[r][c] === false wherever preGravGrid[r][c] === 0.
+CONSEQUENCE:  Cleared cells reported as containing bonus tiles. Reducer
+              increments bonusesCollected for non-existent tiles.
+ENFORCEMENT:  runtime (post-computation spot check, dev builds)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    BonusMaskSystem
+LAW NAME:     PreGravityInputSemantic
+STATUS:       migratory (resolved by explicit cleared-position model)
+STATEMENT:    preGravGrid must be the board state before gravity — zeros mark
+              cleared positions, not general empties.
+CONSEQUENCE:  Obstacle tiles, tutorial gaps, or editor-placed zeros are
+              treated as cleared positions. Bonus mask corrupts without any
+              runtime signal.
+ENFORCEMENT:  docs (until Stage 3 of BonusMask evolution removes preGravGrid)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    TargetGenerator
+LAW NAME:     TargetFloor
+STATUS:       frozen
+STATEMENT:    generateTarget always returns a value >= 2.
+CONSEQUENCE:  target = 0 makes every empty chain valid. target = 1 makes
+              every single-tile chain valid. Score, combo, and progression
+              logic all corrupt.
+ENFORCEMENT:  runtime (single comparison at return boundary)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    TargetGenerator
+LAW NAME:     Stage2OrthogonalGuarantee
+STATUS:       frozen
+STATEMENT:    When Stage-1 fails, Stage-2 guarantees a 2-tile orthogonally
+              adjacent pair exists that achieves the returned target on the
+              board passed in.
+CONSEQUENCE:  If broken, a generated target may be unreachable by any chain.
+              Soft deadlock — timer continues, no valid commit is possible.
+ENFORCEMENT:  docs (semantic property of Stage-2 algorithm)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    TargetGenerator
+LAW NAME:     ChainMatchIsValueBased
+STATUS:       frozen
+STATEMENT:    chainMatchesTarget operates on values: number[], not on grid
+              positions or board state.
+CONSEQUENCE:  If position-aware, a tile mutation between chain extension and
+              commit could change whether a valid chain is accepted. Race
+              condition.
+ENFORCEMENT:  type (function signature accepts number[], not positions)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    ChainEngine
+LAW NAME:     NoDuplicatePositions
+STATUS:       frozen
+STATEMENT:    positions in ChainState contains no duplicate ChainPos values
+              at any point during or after extension.
+CONSEQUENCE:  evaluate() double-counts a tile value. A tile at target/2 can
+              be selected twice to hit target incorrectly. Silent scoring
+              corruption.
+ENFORCEMENT:  docs (structurally enforced by tryExtend; assert if refactored)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    ChainEngine
+LAW NAME:     BacktrackIsSecondToLast
+STATUS:       frozen
+STATEMENT:    tryExtend(state, pos) where pos === positions[length-2] removes
+              positions[length-1]. It does NOT remove all positions after pos,
+              and does NOT add pos.
+CONSEQUENCE:  Drag-back gesture adds a duplicate (NoDuplicates violated) or
+              removes too many tiles (chain collapses incorrectly).
+ENFORCEMENT:  docs (covered by unit test; rule cannot break without rewriting
+              tryExtend)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    sgReducer
+LAW NAME:     NoPRNG
+STATUS:       frozen
+STATEMENT:    sgReducer imports no PRNG source and makes no random or
+              time-dependent calls.
+CONSEQUENCE:  sgReducer(state, action) produces different states for identical
+              inputs. Harness determinism breaks. Replay breaks. Every seeded
+              test becomes invalid.
+ENFORCEMENT:  module boundary (import list; add lint rule for scale)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    sgReducer
+LAW NAME:     ClearingLockout
+STATUS:       frozen
+STATEMENT:    When phase === 'CLEARING', CHAIN_START, CHAIN_EXTEND,
+              CHAIN_COMMIT, and TICK each return state unchanged.
+CONSEQUENCE:  Chain input races gravity animation. Board state and chain state
+              diverge. wrongFlash may fire against a mid-gravity board.
+ENFORCEMENT:  runtime (dev-build assertion at top of each locked handler)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    sgReducer
+LAW NAME:     GravityDoneExclusiveExit
+STATUS:       frozen
+STATEMENT:    GRAVITY_DONE is the only action that transitions phase from
+              CLEARING to PLAYING.
+CONSEQUENCE:  Board returns to PLAYING before gravity settles. Grid may
+              contain zeros. Target may be stale. Next chain evaluates against
+              a broken board.
+ENFORCEMENT:  docs (structurally enforced by phase guards in all other
+              handlers; no type enforcement possible without phase-parameterized
+              action types)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    sgReducer
+LAW NAME:     GridMaskDimensionParity
+STATUS:       frozen
+STATEMENT:    grid.length === bonusMask.length and grid[0].length ===
+              bonusMask[0].length in every SGState produced by sgReducer or
+              initGame.
+CONSEQUENCE:  BonusMaskSystem iterates bonusMask using grid indices.
+              Out-of-bounds access produces undefined. Bonus mask silently
+              corrupts. bonusesCollected counter diverges.
+ENFORCEMENT:  runtime (post-initGame and post-GRAVITY_DONE, dev builds)
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    Entropy Boundary
+LAW NAME:     ReducerEntropyFree
+STATUS:       frozen
+STATEMENT:    No entropy — PRNG, Math.random, Date.now, network, filesystem
+              — enters SGState through sgReducer. All random values arrive
+              via pre-computed payloads: initGame result and GRAVITY_DONE
+              payload.
+CONSEQUENCE:  Game is non-replayable. Harness determinism tests fail. Any
+              action-stream driver cannot predict state transitions.
+ENFORCEMENT:  module boundary + docs
+
+--------------------------------------------------------------------------------
+
+PRIMITIVE:    Entropy Boundary
+LAW NAME:     SpawnTileTokenCount
+STATUS:       soft
+STATEMENT:    spawnTile consumes exactly 2 PRNG tokens per call: one for tile
+              value, one for bonus flag. This count must not change silently.
+CONSEQUENCE:  Any change to token consumption shifts the entire downstream
+              PRNG sequence. Every tile on every board from that point is
+              different. Replay breaks. No type or runtime check catches this.
+ENFORCEMENT:  docs (undocumented contract; must be made explicit in
+              SpawnEngine.ts before any spawn refactoring)
+
+================================================================================
+END OF PHASE-8 TASK-6
+================================================================================
