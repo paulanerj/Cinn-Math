@@ -49,6 +49,39 @@ import {
 
 // ── Bonus mask gravity ────────────────────────────────────────────────────────
 
+// ┌─────────────────────────────────────────────────────────────────────────┐
+// │ ClearedPositionsLaw                                       Phase-8 Task-8│
+// │                                                                         │
+// │ • clearedPositions is the EXACT set of grid coordinates cleared by the  │
+// │   most recent valid CHAIN_COMMIT.                                       │
+// │ • Coordinates are taken from the reducer's CHAIN_COMMIT snapshot,       │
+// │   BEFORE any gravity mutation.                                          │
+// │ • No position outside that commit snapshot may appear in               │
+// │   clearedPositions.                                                     │
+// │ • Duplicates are FORBIDDEN.                                             │
+// │ • Order is irrelevant; set semantics apply.                             │
+// │ • clearedPositions must be derivable deterministically from:            │
+// │     – preGravGrid (the post-clear grid where cleared cells are 0)       │
+// │     – state.chain.positions (single-chain era)                          │
+// │ • clearedPositions is NOT recorded for replay; it is re-derived.        │
+// │                                                                         │
+// │ This law exists to enable future multi-chain union clears without       │
+// │ changing BonusMask semantics.                                           │
+// └─────────────────────────────────────────────────────────────────────────┘
+
+// ┌─────────────────────────────────────────────────────────────────────────┐
+// │ GravitySnapshotBoundaryLaw                                Phase-8 Task-8│
+// │                                                                         │
+// │ • preGravGrid is the reducer grid AFTER CHAIN_COMMIT mutation           │
+// │   (cleared tiles set to zero) and BEFORE any GravitySystem call.       │
+// │ • clearedPositions refers to positions that were non-zero BEFORE commit │
+// │   and are zero AFTER commit.                                            │
+// │ • BonusMask evolution Stage-1 dual-path assertion must compare:         │
+// │     A. explicit clearedPositions path                                   │
+// │     B. zero-inference path                                              │
+// │ • Any mismatch indicates a snapshot timing violation.                   │
+// └─────────────────────────────────────────────────────────────────────────┘
+
 // BONUSMASK EVOLUTION STAGE-1
 // clearedPositions additive migration path
 // preGravGrid zero-inference scheduled for removal in Stage-3
@@ -76,6 +109,37 @@ export function applyBonusMaskGravity(
   clearedPositions?: ReadonlyArray<{ row: number; col: number }>,
 ): boolean[][] {
   if (clearedPositions !== undefined) {
+    // --- AssertClearedPositionsIntegrity (Phase-8 Task-8) ---
+    // Validates ClearedPositionsLaw before any mask computation:
+    //   1. No duplicates: Set key count must equal array length.
+    //   2. Every declared cleared position must be zero in preGravGrid
+    //      (confirming GravitySnapshotBoundaryLaw — snapshot taken post-commit).
+    // NOTE: Chain-length equality (positions.length === chain.positions.length)
+    // is enforced by Stage-2 callers; the function cannot verify it without
+    // receiving the chain length as a parameter.
+    if (process.env.NODE_ENV !== 'production') {
+      const keySet = new Set<string>(
+        clearedPositions.map(({ row, col }) => `${row},${col}`),
+      );
+      if (keySet.size !== clearedPositions.length) {
+        throw new Error(
+          `[BONUSMASK EVOLUTION] AssertClearedPositionsIntegrity: ` +
+            `duplicate positions detected. ` +
+            `array length=${clearedPositions.length}, unique=${keySet.size}.`,
+        );
+      }
+      for (const { row, col } of clearedPositions) {
+        if (preGravGrid[row]?.[col] !== 0) {
+          throw new Error(
+            `[BONUSMASK EVOLUTION] AssertClearedPositionsIntegrity: ` +
+              `position [${row},${col}] is declared cleared but ` +
+              `preGravGrid[${row}][${col}]=${String(preGravGrid[row]?.[col])} (expected 0). ` +
+              `Snapshot timing violation — preGravGrid must be post-commit.`,
+          );
+        }
+      }
+    }
+
     // --- Explicit cleared-position path ---
     // Build O(1) lookup set from authoritative cleared list.
     const clearedSet = new Set<string>(
@@ -90,9 +154,11 @@ export function applyBonusMaskGravity(
       (r, c) => !clearedSet.has(`${r},${c}`),
     );
 
-    // Dev assertion: explicit result must equal zero-inference result.
-    // A mismatch means clearedPositions and preGravGrid disagree — catch
-    // migration bugs before Stage-3 removes the fallback path.
+    // --- ZeroInferenceParityLaw guard (Phase-8 Task-8) ---
+    // Confirms Stage-1 dual-path equality: explicit result must deep-equal
+    // the zero-inference result. A mismatch means clearedPositions and
+    // preGravGrid disagree — this is a snapshot timing violation.
+    // This guard must remain until Stage-3 removes the zero-inference path.
     if (process.env.NODE_ENV !== 'production') {
       const inferredResult = _computeBonusMask(
         oldMask,
@@ -105,7 +171,7 @@ export function applyBonusMaskGravity(
         for (let c = 0; c < cols; c++) {
           if (explicitResult[r][c] !== inferredResult[r][c]) {
             throw new Error(
-              `[BONUSMASK EVOLUTION] Stage-1 assertion failed at [${r}][${c}]: ` +
+              `[BONUSMASK EVOLUTION] ZeroInferenceParityLaw violated at [${r}][${c}]: ` +
                 `explicit=${String(explicitResult[r][c])}, ` +
                 `inferred=${String(inferredResult[r][c])}. ` +
                 `clearedPositions and preGravGrid zero-inference disagree.`,
@@ -227,6 +293,15 @@ export function sgReducer(state: SGState, action: SGAction): SGState {
     }
 
     case 'CHAIN_COMMIT': {
+      // FUTURE LAW — MultiChainUnionClear (Phase-8 Task-8 forward guard)
+      // In the multi-chain era, clearedPositions will become union(all committed chains).
+      // Gravity will trigger only when all active pointers release.
+      // Do NOT encode single-chain assumptions here (e.g. "positions === chain.positions").
+      // The single-chain derivation below is valid only for the single-chain era.
+      //
+      // Phase-8 Task-8 confirms no entropy boundary movement:
+      // No new PRNG calls, no spawnTile token consumption changes, and no
+      // generateTarget call-order changes are introduced in this case branch.
       if (state.phase !== 'PLAYING') return state;
 
       const committed = commitChain(state.chain);

@@ -462,6 +462,56 @@ The following conditions require an immediate stop and a question before any cod
 
 ---
 
+---
+
+## H. REPLAY DERIVATION RULE — ClearedPositions (Phase-8 Task-8)
+
+**Status:** Documentation only — no replay code modified.
+
+### Rule
+
+> The replay engine MUST NOT record `clearedPositions` as a serialized field.
+> `clearedPositions` is re-derived deterministically on replay from the reducer
+> state, not replayed from a stored list.
+
+### Derivation Algorithm
+
+On replay of a `CHAIN_COMMIT` event, the engine derives `clearedPositions` as:
+
+```
+clearedPositions = diff(preCommitGrid, postCommitGrid)
+                 = { (r, c) | preCommitGrid[r][c] !== 0
+                              AND postCommitGrid[r][c] === 0 }
+```
+
+Equivalently, during live play (single-chain era):
+
+```
+clearedPositions = state.chain.positions  (at commit snapshot)
+```
+
+Both derivations are deterministic from the reducer snapshot sequence and
+produce identical results. The grid-diff form is preferred for replay because
+it does not depend on the chain object being present in the replay log.
+
+### Rationale
+
+- Recording `clearedPositions` would couple replay format to BonusMask
+  evolution stage, breaking replay files across Stage-1 → Stage-3 migration.
+- Re-derivation guarantees replay determinism independent of BonusMask
+  evolution progress.
+- In the multi-chain era, `clearedPositions` will become the union of all
+  committed chains. Re-derivation from the grid diff naturally handles this
+  without replay format changes.
+
+### Invariant
+
+If the replay-derived `clearedPositions` ever differs from the live-computed
+`clearedPositions`, the replay is corrupt. The `AssertClearedPositionsIntegrity`
+dev assertion in `applyBonusMaskGravity` will catch this during dev replay runs.
+
+---
+
 ## VERDICT
 
 **SpeedGrid is safe to restore directly now.** Every system SpeedGrid depends on is already in place and closed: `ChainSelector.ts`, `GravitySystem.ts`, `GravityAnimator.ts`, `ScoreSystem.ts`, `TimerSystem.ts`, `TargetGenerator.ts`, `SpawnEngine.ts`, `PracticeProfile.ts`, `HUDShell.tsx`, `GameControlsLayer.tsx`, and `tileStyles.ts` all exist, are documented, and are importable without modification. The platform boundary (`GameSelector.tsx`) requires only a two-line wiring change. CombineGrid's lock is not threatened by anything in this plan — the two games share no files, no state, no components, and no coordinate types. The one non-trivial implementation challenge is the `bonusMask` propagation through `GravitySystem`, but this is solvable at the game layer using the `fallingTiles` metadata that `GravitySystem` already returns, so no platform-level correction is required first. Phase 7 can begin on code immediately.
