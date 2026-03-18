@@ -71,34 +71,37 @@ import {
 
 // ┌─────────────────────────────────────────────────────────────────────────┐
 // │ GravitySnapshotBoundaryLaw                                Phase-8 Task-8│
+// │ (dual-path assertion removed Phase-8 Task-10; explicit semantics frozen)│
 // │                                                                         │
 // │ • preGravGrid is the reducer grid AFTER CHAIN_COMMIT mutation           │
 // │   (cleared tiles set to zero) and BEFORE any GravitySystem call.       │
 // │ • clearedPositions refers to positions that were non-zero BEFORE commit │
 // │   and are zero AFTER commit.                                            │
-// │ • BonusMask evolution Stage-1 dual-path assertion must compare:         │
-// │     A. explicit clearedPositions path                                   │
-// │     B. zero-inference path                                              │
-// │ • Any mismatch indicates a snapshot timing violation.                   │
+// │ • AssertClearedPositionsIntegrity verifies snapshot timing correctness. │
 // └─────────────────────────────────────────────────────────────────────────┘
 
-// BONUSMASK EVOLUTION STAGE-1
-// clearedPositions additive migration path
-// preGravGrid zero-inference scheduled for removal in Stage-3
+// ┌─────────────────────────────────────────────────────────────────────────┐
+// │ LAW — Explicit Survivor Semantics                        Phase-8 Task-10│
+// │                                                                         │
+// │ applyBonusMaskGravity REQUIRES clearedPositions.                        │
+// │ Zero-inference survivor detection has been permanently removed.         │
+// │ All callers must supply clearedPositions derived from chain commit.     │
+// │ Replay systems must re-derive clearedPositions via grid diff.           │
+// │ This law is frozen.                                                     │
+// └─────────────────────────────────────────────────────────────────────────┘
 
 /**
  * Applies the same column-compaction logic as GravitySystem to the bonus mask.
  * Called in the CLEARING effect after gravity so bonus status follows its tile.
  *
  * Algorithm (per column):
- *   1. Collect surviving tile bonus values bottom-to-top.
+ *   1. Collect surviving tile bonus values (tiles NOT in clearedPositions), bottom-to-top.
  *   2. Place them at the bottom of the new mask (mirrors gravity compaction).
  *   3. Fill remaining top rows with spawn bonuses from spawnBonuses[col][idx].
  *
- * Stage-1 migration: accepts optional clearedPositions for explicit survivor
- * determination. When provided, cleared cells are identified by position rather
- * than preGravGrid zero-inference. Both paths produce identical results today;
- * a dev assertion enforces this invariant during migration.
+ * Survivor semantics: a tile at (r,c) survives iff its position is NOT present
+ * in clearedPositions. Zero-inference (preGravGrid[r][c] !== 0) has been
+ * permanently removed (Phase-8 Task-10).
  */
 export function applyBonusMaskGravity(
   oldMask: boolean[][],
@@ -106,98 +109,58 @@ export function applyBonusMaskGravity(
   spawnBonuses: boolean[][],
   rows: number,
   cols: number,
-  clearedPositions?: ReadonlyArray<{ row: number; col: number }>,
+  clearedPositions: ReadonlyArray<{ row: number; col: number }>,
 ): boolean[][] {
-  if (clearedPositions !== undefined) {
-    // --- AssertClearedPositionsIntegrity (Phase-8 Task-8) ---
-    // Validates ClearedPositionsLaw before any mask computation:
-    //   1. No duplicates: Set key count must equal array length.
-    //   2. Every declared cleared position must be zero in preGravGrid
-    //      (confirming GravitySnapshotBoundaryLaw — snapshot taken post-commit).
-    // NOTE: Chain-length equality (positions.length === chain.positions.length)
-    // is enforced by Stage-2 callers; the function cannot verify it without
-    // receiving the chain length as a parameter.
-    if (process.env.NODE_ENV !== 'production') {
-      const keySet = new Set<string>(
-        clearedPositions.map(({ row, col }) => `${row},${col}`),
-      );
-      if (keySet.size !== clearedPositions.length) {
-        throw new Error(
-          `[BONUSMASK EVOLUTION] AssertClearedPositionsIntegrity: ` +
-            `duplicate positions detected. ` +
-            `array length=${clearedPositions.length}, unique=${keySet.size}.`,
-        );
-      }
-      for (const { row, col } of clearedPositions) {
-        if (preGravGrid[row]?.[col] !== 0) {
-          throw new Error(
-            `[BONUSMASK EVOLUTION] AssertClearedPositionsIntegrity: ` +
-              `position [${row},${col}] is declared cleared but ` +
-              `preGravGrid[${row}][${col}]=${String(preGravGrid[row]?.[col])} (expected 0). ` +
-              `Snapshot timing violation — preGravGrid must be post-commit.`,
-          );
-        }
-      }
-    }
-
-    // --- Explicit cleared-position path ---
-    // Build O(1) lookup set from authoritative cleared list.
-    const clearedSet = new Set<string>(
+  // --- AssertClearedPositionsIntegrity (Phase-8 Task-8, retained Task-10) ---
+  // Validates ClearedPositionsLaw before any mask computation:
+  //   1. No duplicates: Set key count must equal array length.
+  //   2. Every declared cleared position must be zero in preGravGrid
+  //      (confirming GravitySnapshotBoundaryLaw — snapshot taken post-commit).
+  // NOTE: Chain-length equality (positions.length === chain.positions.length)
+  // is enforced by callers; the function cannot verify it without
+  // receiving the chain length as a parameter.
+  if (process.env.NODE_ENV !== 'production') {
+    const keySet = new Set<string>(
       clearedPositions.map(({ row, col }) => `${row},${col}`),
     );
-
-    const explicitResult = _computeBonusMask(
-      oldMask,
-      rows,
-      cols,
-      spawnBonuses,
-      (r, c) => !clearedSet.has(`${r},${c}`),
-    );
-
-    // --- ZeroInferenceParityLaw guard (Phase-8 Task-8) ---
-    // Confirms Stage-1 dual-path equality: explicit result must deep-equal
-    // the zero-inference result. A mismatch means clearedPositions and
-    // preGravGrid disagree — this is a snapshot timing violation.
-    // This guard must remain until Stage-3 removes the zero-inference path.
-    if (process.env.NODE_ENV !== 'production') {
-      const inferredResult = _computeBonusMask(
-        oldMask,
-        rows,
-        cols,
-        spawnBonuses,
-        (r, c) => preGravGrid[r][c] !== 0,
+    if (keySet.size !== clearedPositions.length) {
+      throw new Error(
+        `[BONUSMASK] AssertClearedPositionsIntegrity: ` +
+          `duplicate positions detected. ` +
+          `array length=${clearedPositions.length}, unique=${keySet.size}.`,
       );
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (explicitResult[r][c] !== inferredResult[r][c]) {
-            throw new Error(
-              `[BONUSMASK EVOLUTION] ZeroInferenceParityLaw violated at [${r}][${c}]: ` +
-                `explicit=${String(explicitResult[r][c])}, ` +
-                `inferred=${String(inferredResult[r][c])}. ` +
-                `clearedPositions and preGravGrid zero-inference disagree.`,
-            );
-          }
-        }
+    }
+    for (const { row, col } of clearedPositions) {
+      if (preGravGrid[row]?.[col] !== 0) {
+        throw new Error(
+          `[BONUSMASK] AssertClearedPositionsIntegrity: ` +
+            `position [${row},${col}] is declared cleared but ` +
+            `preGravGrid[${row}][${col}]=${String(preGravGrid[row]?.[col])} (expected 0). ` +
+            `Snapshot timing violation — preGravGrid must be post-commit.`,
+        );
       }
     }
-
-    return explicitResult;
   }
 
-  // --- Zero-inference fallback (scheduled for removal in Stage-3) ---
-  // Surviving tiles identified by preGravGrid[r][c] !== 0.
+  // Build O(1) lookup set from authoritative cleared list.
+  // Survivor = tile position NOT present in clearedPositions.
+  const clearedSet = new Set<string>(
+    clearedPositions.map(({ row, col }) => `${row},${col}`),
+  );
+
   return _computeBonusMask(
     oldMask,
     rows,
     cols,
     spawnBonuses,
-    (r, c) => preGravGrid[r][c] !== 0,
+    (r, c) => !clearedSet.has(`${r},${c}`),
   );
 }
 
 /**
- * Shared column-compaction kernel used by both survivor-determination paths.
- * @param isSurvivor - returns true when the tile at (r, c) survived clearing.
+ * Column-compaction kernel for bonus mask gravity.
+ * isSurvivor returns true when the tile at (r, c) survived the clear.
+ * Caller must derive isSurvivor from clearedPositions (explicit law).
  */
 function _computeBonusMask(
   oldMask: boolean[][],
