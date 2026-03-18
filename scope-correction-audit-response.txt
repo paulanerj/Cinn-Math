@@ -1,0 +1,75 @@
+SCOPE CORRECTION — REPO CONTAMINATION AUDIT RESPONSE
+================================================================================
+
+Already done in the previous turn. Here is the proof:
+
+src/ contents:
+  engine
+  games
+  grid
+  index.css
+  main.tsx
+  platform
+  systems
+
+git log (recent):
+  d2f83f2 Revert: remove wrong-project contamination (Parent Reward Platform)
+  37a45f4 Parent Reward Platform: execution baseline — contracts, models, state container
+  6aa62d9 Phase-8 Task-6: primitive law hardening — canonical law register + architecture docs
+  e07da3a Phase-8 Task-4: resolve HC-1 — spawnBonusMap via GravitySystem
+
+grep result for contracts/types | models/state | simulation/01_state across src/:
+  ZERO REFERENCES
+
+This was already resolved. Summary:
+
+--------------------------------------------------------------------------------
+
+A. CONTAMINATION FINDINGS
+
+src/contracts/types.ts, src/models/state.ts, src/simulation/01_stateContainer.ts
+— zero references in any SpeedGrid, CombineGrid, or shared primitive file.
+Wrong-project artifacts only.
+
+--------------------------------------------------------------------------------
+
+B. FILES REMOVED
+
+All three, plus their empty parent directories. Committed as d2f83f2.
+
+--------------------------------------------------------------------------------
+
+C. PROOF OF ZERO REFERENCES
+
+grep across all .ts/.tsx in src/ — no output.
+
+--------------------------------------------------------------------------------
+
+D. COMPILE RESULT
+
+Pre-existing Board.tsx key-prop error unchanged. Zero new errors introduced or
+resolved — the contaminated files had no compile surface in this repo.
+
+--------------------------------------------------------------------------------
+
+E. NEXT CORRECT ENGINE TASK
+
+ACTIVE PROJECT:  Cinn-Math engine repo
+ACTIVE ENGINES:  SpeedGrid + CombineGrid
+OUT-OF-SCOPE:    platform architecture / contracts layers / simulation frameworks
+
+Next task: Phase-8 Task-7 — Engine Constitution Lock + Extraction Execution Plan.
+
+Governs the irreversible extraction order:
+  ChainEngine
+  -> BonusMaskSystem
+  -> TargetSolvability
+  -> GravityOrchestrator
+  -> ReducerContract docs
+
+Established in Task-6, converting sequencing governance into a committed
+execution contract with prerequisite conditions and boundary moments locked.
+
+================================================================================
+END OF RESPONSE
+================================================================================
