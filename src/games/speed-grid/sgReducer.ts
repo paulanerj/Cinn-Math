@@ -49,14 +49,23 @@ import {
 
 // ── Bonus mask gravity ────────────────────────────────────────────────────────
 
+// BONUSMASK EVOLUTION STAGE-1
+// clearedPositions additive migration path
+// preGravGrid zero-inference scheduled for removal in Stage-3
+
 /**
  * Applies the same column-compaction logic as GravitySystem to the bonus mask.
  * Called in the CLEARING effect after gravity so bonus status follows its tile.
  *
  * Algorithm (per column):
- *   1. Collect surviving tile bonus values bottom-to-top (preGravGrid[r][c] !== 0).
+ *   1. Collect surviving tile bonus values bottom-to-top.
  *   2. Place them at the bottom of the new mask (mirrors gravity compaction).
  *   3. Fill remaining top rows with spawn bonuses from spawnBonuses[col][idx].
+ *
+ * Stage-1 migration: accepts optional clearedPositions for explicit survivor
+ * determination. When provided, cleared cells are identified by position rather
+ * than preGravGrid zero-inference. Both paths produce identical results today;
+ * a dev assertion enforces this invariant during migration.
  */
 export function applyBonusMaskGravity(
   oldMask: boolean[][],
@@ -64,6 +73,72 @@ export function applyBonusMaskGravity(
   spawnBonuses: boolean[][],
   rows: number,
   cols: number,
+  clearedPositions?: ReadonlyArray<{ row: number; col: number }>,
+): boolean[][] {
+  if (clearedPositions !== undefined) {
+    // --- Explicit cleared-position path ---
+    // Build O(1) lookup set from authoritative cleared list.
+    const clearedSet = new Set<string>(
+      clearedPositions.map(({ row, col }) => `${row},${col}`),
+    );
+
+    const explicitResult = _computeBonusMask(
+      oldMask,
+      rows,
+      cols,
+      spawnBonuses,
+      (r, c) => !clearedSet.has(`${r},${c}`),
+    );
+
+    // Dev assertion: explicit result must equal zero-inference result.
+    // A mismatch means clearedPositions and preGravGrid disagree — catch
+    // migration bugs before Stage-3 removes the fallback path.
+    if (process.env.NODE_ENV !== 'production') {
+      const inferredResult = _computeBonusMask(
+        oldMask,
+        rows,
+        cols,
+        spawnBonuses,
+        (r, c) => preGravGrid[r][c] !== 0,
+      );
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (explicitResult[r][c] !== inferredResult[r][c]) {
+            throw new Error(
+              `[BONUSMASK EVOLUTION] Stage-1 assertion failed at [${r}][${c}]: ` +
+                `explicit=${String(explicitResult[r][c])}, ` +
+                `inferred=${String(inferredResult[r][c])}. ` +
+                `clearedPositions and preGravGrid zero-inference disagree.`,
+            );
+          }
+        }
+      }
+    }
+
+    return explicitResult;
+  }
+
+  // --- Zero-inference fallback (scheduled for removal in Stage-3) ---
+  // Surviving tiles identified by preGravGrid[r][c] !== 0.
+  return _computeBonusMask(
+    oldMask,
+    rows,
+    cols,
+    spawnBonuses,
+    (r, c) => preGravGrid[r][c] !== 0,
+  );
+}
+
+/**
+ * Shared column-compaction kernel used by both survivor-determination paths.
+ * @param isSurvivor - returns true when the tile at (r, c) survived clearing.
+ */
+function _computeBonusMask(
+  oldMask: boolean[][],
+  rows: number,
+  cols: number,
+  spawnBonuses: boolean[][],
+  isSurvivor: (r: number, c: number) => boolean,
 ): boolean[][] {
   const newMask: boolean[][] = Array.from({ length: rows }, () =>
     Array(cols).fill(false),
@@ -72,7 +147,7 @@ export function applyBonusMaskGravity(
   for (let c = 0; c < cols; c++) {
     const surviving: boolean[] = [];
     for (let r = rows - 1; r >= 0; r--) {
-      if (preGravGrid[r][c] !== 0) {
+      if (isSurvivor(r, c)) {
         surviving.push(oldMask[r][c]);
       }
     }
