@@ -199,6 +199,22 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
   // single re-render — no extra paint.
   const [chainCommitSeq, setChainCommitSeq] = useState(0);
 
+  // BONUSMASK EVOLUTION STAGE-2
+  // Captures the committed chain positions immediately before CHAIN_COMMIT
+  // is dispatched. The CLEARING effect reads this ref to pass explicit
+  // clearedPositions to applyBonusMaskGravity.
+  //
+  // Cannot read positions from the CLEARING effect's closure-captured `state`:
+  // sgReducer sets chain → emptyChain() during CHAIN_COMMIT, so
+  // state.chain.positions is [] by the time the CLEARING phase is observed.
+  // This ref is set synchronously before rawDispatch, so it always contains
+  // the pre-commit positions when the subsequent CLEARING effect fires.
+  //
+  // zero-inference fallback retained until Stage-3 removal
+  const lastClearedPositionsRef = useRef<
+    ReadonlyArray<{ row: number; col: number }>
+  >([]);
+
   // Telemetry-aware dispatch wrapper. Wraps rawDispatch so all dispatch
   // call sites are unchanged while logging every action to telemetryRef.
   const dispatch = useCallback((action: SGAction) => {
@@ -213,6 +229,12 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
     }
     if (action.type === 'CHAIN_COMMIT') {
       setChainCommitSeq((s) => s + 1);
+      // BONUSMASK EVOLUTION STAGE-2: capture pre-commit chain positions.
+      // stateRef.current is the last-rendered state (pre-commit). Chain is
+      // still active here; the reducer will clear it during processing.
+      // These positions become the authoritative clearedPositions for the
+      // CLEARING effect that follows a valid commit.
+      lastClearedPositionsRef.current = stateRef.current.chain.positions;
     }
     rawDispatch(action);
   }, [rawDispatch]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -298,13 +320,22 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
       0,
     );
 
-    // Remap bonus mask using same column-compaction as GravitySystem.
+    // BONUSMASK EVOLUTION STAGE-2
+    // explicit clearedPositions path is now the primary live path
+    // zero-inference fallback retained until Stage-3 removal
+    //
+    // Source: lastClearedPositionsRef.current — captured from
+    // stateRef.current.chain.positions immediately before CHAIN_COMMIT
+    // dispatched (see dispatch wrapper above).  This is the authoritative
+    // CLEARING snapshot: positions taken after commit but before gravity,
+    // satisfying ClearedPositionsLaw and GravitySnapshotBoundaryLaw.
     const newBonusMask = applyBonusMaskGravity(
       clearMask,
       clearGrid,
       gravResult.spawnBonusMap,
       ROWS,
       COLS,
+      lastClearedPositionsRef.current,
     );
 
     // Generate next target from the settled board.
