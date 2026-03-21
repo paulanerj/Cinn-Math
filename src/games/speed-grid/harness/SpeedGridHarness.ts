@@ -112,19 +112,29 @@ export interface ChainPatternResult {
  * Synchronously resolves one gravity cycle from a CLEARING state.
  * Mirrors the async CLEARING effect in SpeedGridGame.tsx without timers.
  *
- * BONUSMASK EVOLUTION STAGE-2
- * clearedPositions is now accepted explicitly and forwarded to
- * applyBonusMaskGravity as the primary live path.
- * When empty (harness defensive fallback), zero-inference is used.
- * zero-inference fallback retained until Stage-3 removal.
+ * clearedPositions is the authoritative set of committed chain positions
+ * (same source as component's lastClearedPositionsRef). Callers must supply
+ * a non-empty array — explicit survivor semantics only (Phase-8 Task-10).
  */
 function resolveGravitySync(
   state: SGState,
   prng: () => number,
   profile: PracticeProfile,
-  clearedPositions: ReadonlyArray<{ row: number; col: number }> = [],
+  clearedPositions: ReadonlyArray<{ row: number; col: number }>,
 ): SGState {
   if (state.phase !== 'CLEARING') return state;
+
+  // Explicit Survivor Law (Phase-8 Task-10): harness must always provide
+  // clearedPositions derived from the CHAIN_COMMIT snapshot.
+  if (process.env.NODE_ENV !== 'production') {
+    if (clearedPositions.length === 0) {
+      throw new Error(
+        '[BONUSMASK] Explicit Survivor Law violation: ' +
+          'resolveGravitySync received empty clearedPositions. ' +
+          'Harness must supply positions from simulateChain() commit snapshot.',
+      );
+    }
+  }
 
   // Cache each SpawnedTile by (col, spawnIndex) so both spawnValue and
   // spawnBonus callbacks draw from the same spawnTile() call — one PRNG
@@ -144,22 +154,16 @@ function resolveGravitySync(
     (col: number, spawnIndex: number) => spawnCache[col][spawnIndex].isBonus,
   );
 
-  // BONUSMASK EVOLUTION STAGE-2
-  // explicit clearedPositions path is now the primary live path
-  // zero-inference fallback retained until Stage-3 removal
-  //
-  // Source: clearedPositions passed from simulateChain() which captures
-  // the positions array before CHAIN_COMMIT is dispatched — the same
-  // authoritative source as the component's lastClearedPositionsRef.
-  // When clearedPositions is empty (defensive fallback), undefined is
-  // passed so applyBonusMaskGravity uses zero-inference.
+  // Source: clearedPositions from simulateChain() — the positions array
+  // captured at CHAIN_COMMIT, identical to lastClearedPositionsRef in the
+  // component. Passed directly; no fallback (Explicit Survivor Law).
   const newBonusMask = applyBonusMaskGravity(
     state.bonusMask,
     state.grid,
     gravResult.spawnBonusMap,
     ROWS,
     COLS,
-    clearedPositions.length > 0 ? clearedPositions : undefined,
+    clearedPositions,
   );
 
   const newTarget = generateTarget(
@@ -245,10 +249,9 @@ export class SGHarness {
   readonly prng: () => number;
   readonly profile: PracticeProfile;
 
-  // BONUSMASK EVOLUTION STAGE-2
-  // Stores the committed chain positions when simulateChain() produces a
-  // CLEARING transition. resolveGravity() forwards these to resolveGravitySync()
-  // so applyBonusMaskGravity receives explicit clearedPositions.
+  // Committed chain positions from the most recent valid CHAIN_COMMIT.
+  // Captured by simulateChain(); forwarded by resolveGravity() to
+  // resolveGravitySync() as the authoritative clearedPositions.
   // Not part of SGState — harness-only bookkeeping.
   private readonly lastClearedPositions: ReadonlyArray<{
     row: number;
@@ -289,9 +292,9 @@ export class SGHarness {
    * Simulates a full drag chain: CHAIN_START → CHAIN_EXTENDs → CHAIN_COMMIT.
    * Each consecutive pair of positions must be Chebyshev-adjacent.
    *
-   * BONUSMASK EVOLUTION STAGE-2: if the commit produces a CLEARING transition,
-   * the positions are stored as lastClearedPositions so resolveGravity() can
-   * forward them to applyBonusMaskGravity as explicit clearedPositions.
+   * If the commit produces a CLEARING transition, positions are stored as
+   * lastClearedPositions so resolveGravity() can forward them as the
+   * authoritative clearedPositions (Explicit Survivor Law).
    */
   simulateChain(positions: Array<{ row: number; col: number }>): SGHarness {
     if (positions.length === 0) return this;
@@ -300,9 +303,8 @@ export class SGHarness {
       h = h.step({ type: 'CHAIN_EXTEND', pos: positions[i] });
     }
     const afterCommit = h.step({ type: 'CHAIN_COMMIT' });
-    // BONUSMASK EVOLUTION STAGE-2: capture positions when valid commit fires.
-    // Source: the positions array passed to simulateChain() — same authoritative
-    // source as component's lastClearedPositionsRef (pre-commit chain positions).
+    // Capture positions when a valid commit fires CLEARING.
+    // Source: positions arg — same authoritative source as lastClearedPositionsRef.
     if (afterCommit.state.phase === 'CLEARING') {
       return new SGHarness(
         afterCommit.state,
@@ -318,9 +320,8 @@ export class SGHarness {
    * Synchronously resolves one CLEARING cycle → PLAYING.
    * No-op if not in CLEARING phase.
    *
-   * BONUSMASK EVOLUTION STAGE-2: forwards lastClearedPositions (set by
-   * simulateChain on valid commit) to resolveGravitySync so the explicit
-   * clearedPositions path is the primary live path.
+   * Forwards lastClearedPositions (captured by simulateChain on valid commit)
+   * to resolveGravitySync as the authoritative clearedPositions.
    */
   resolveGravity(): SGHarness {
     const next = resolveGravitySync(
