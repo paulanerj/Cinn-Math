@@ -88,8 +88,8 @@ import {
 import {
   initGame,
   sgReducer,
-  applyBonusMaskGravity,
 } from './sgReducer';
+import { applyBonusMaskGravity } from '../../systems/BonusMaskSystem';
 
 // ── System imports ────────────────────────────────────────────────────────────
 import {
