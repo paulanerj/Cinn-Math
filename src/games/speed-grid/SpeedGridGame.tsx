@@ -210,7 +210,7 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
   // This ref is set synchronously before rawDispatch, so it always contains
   // the pre-commit positions when the subsequent CLEARING effect fires.
   //
-  // zero-inference fallback retained until Stage-3 removal
+  // [Phase-8 Task-10] Explicit-only. Zero-inference permanently removed.
   const lastClearedPositionsRef = useRef<
     ReadonlyArray<{ row: number; col: number }>
   >([]);
@@ -320,9 +320,10 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
       0,
     );
 
-    // BONUSMASK EVOLUTION STAGE-2
-    // explicit clearedPositions path is now the primary live path
-    // zero-inference fallback retained until Stage-3 removal
+    // [EXPLICIT SURVIVOR LAW — FROZEN, Phase-8 Task-10]
+    // Survivor semantics are explicit-only. clearedPositions is authoritative.
+    // Replay derives clearedPositions from the commit snapshot (chain.positions
+    // captured before CHAIN_COMMIT). Zero-inference has been permanently removed.
     //
     // Source: lastClearedPositionsRef.current — captured from
     // stateRef.current.chain.positions immediately before CHAIN_COMMIT
