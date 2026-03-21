@@ -57,14 +57,65 @@ export default function GameSelector() {
           height: "100%",
           background: "#141416",
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
+          gap: 20,
           fontFamily: "sans-serif",
         }}
       >
-        <div style={{ color: "#fff", fontSize: 32, fontWeight: 900 }}>
-          test
+        <div
+          style={{
+            color: "#fff",
+            fontSize: 32,
+            fontWeight: 900,
+            letterSpacing: 4,
+            marginBottom: 12,
+            textTransform: "uppercase",
+          }}
+        >
+          Cinn Math
         </div>
+
+        {/* [PHASE 6] Button launches CombineGrid */}
+        <button
+          onClick={() => setGame("combine-grid")}
+          style={{
+            width: 240,
+            padding: "20px 0",
+            borderRadius: 20,
+            border: "none",
+            background: "#e67e22",
+            color: "#fff",
+            fontSize: 17,
+            fontWeight: 800,
+            cursor: "pointer",
+            letterSpacing: 1,
+            boxShadow: "0 6px 0 rgba(154,52,18,1)",
+          }}
+        >
+          CombineGrid
+        </button>
+
+        {/* [PHASE 7] Button launches SpeedGrid */}
+        <button
+          onClick={() => setGame("speed-grid")}
+          style={{
+            width: 240,
+            padding: "20px 0",
+            borderRadius: 20,
+            border: "none",
+            background: "#3b82f6",
+            color: "#fff",
+            fontSize: 17,
+            fontWeight: 800,
+            cursor: "pointer",
+            letterSpacing: 1,
+            boxShadow: "0 6px 0 rgba(29,78,216,1)",
+          }}
+        >
+          SpeedGrid
+        </button>
       </div>
     );
   }
