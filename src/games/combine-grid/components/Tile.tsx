@@ -1,9 +1,8 @@
 import React from 'react';
-import { Tile as TileType } from '../types';
 import { BASE_RADIUS_PX, PAD } from '../uiTokens';
 
 interface TileProps {
-  tile: TileType;
+  val: number;
   size: number;
   selected: boolean;
   clearing: boolean;
@@ -24,7 +23,7 @@ const BASE_SHADOW =
 const SEL_SHADOW =
   '0 0 0 3px rgba(255,180,0,0.85), 0 4px 16px rgba(255,120,0,0.45), inset 0 1px 0 rgba(255,255,255,0.25)';
 
-export default function Tile({ tile, size, selected, clearing, onPress }: TileProps) {
+export default function Tile({ val, size, selected, clearing, onPress }: TileProps) {
   const fontSize = size * 0.42;
   const radius = Math.min(BASE_RADIUS_PX, size * 0.28);
 
@@ -40,7 +39,7 @@ export default function Tile({ tile, size, selected, clearing, onPress }: TilePr
         border: selected
           ? '2px solid rgba(255,200,60,0.90)'
           : '2px solid rgba(0,0,0,0.18)',
-        background: tileBackground(tile.val),
+        background: tileBackground(val),
         boxShadow: selected ? SEL_SHADOW : BASE_SHADOW,
         color: '#ffffff',
         fontWeight: 900,
@@ -53,7 +52,7 @@ export default function Tile({ tile, size, selected, clearing, onPress }: TilePr
       }}
       className="flex items-center justify-center select-none"
     >
-      {tile.val}
+      {val}
     </button>
   );
 }

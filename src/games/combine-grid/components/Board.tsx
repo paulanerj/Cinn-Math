@@ -1,11 +1,11 @@
 import React from 'react';
 import Tile from './Tile';
-import { Tile as TileType, GridPos } from '../types';
+import { GridPos } from '../types';
 import { GAP } from '../uiTokens';
 import { isSelected } from '../services/SelectionService';
 
 interface BoardProps {
-  grid: TileType[][];
+  grid: number[][];
   tileSize: number;
   selection: GridPos[];
   clearingPositions: GridPos[];
@@ -30,31 +30,31 @@ export default function Board({
         boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.40)',
       }}
     >
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: `repeat(${cols}, ${tileSize}px)`,
-        gap: GAP,
-      }}
-    >
-      {grid.map((row, r) =>
-        row.map((tile, c) => {
-          const pos: GridPos = { r, c };
-          const sel = isSelected(selection, pos);
-          const clearing = clearingPositions.some((p) => p.r === r && p.c === c);
-          return (
-            <Tile
-              key={tile.id}
-              tile={tile}
-              size={tileSize}
-              selected={sel}
-              clearing={clearing}
-              onPress={() => onTilePress(pos)}
-            />
-          );
-        }),
-      )}
-    </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: `repeat(${cols}, ${tileSize}px)`,
+          gap: GAP,
+        }}
+      >
+        {grid.map((row, r) =>
+          row.map((val, c) => {
+            const pos: GridPos = { row: r, col: c };
+            const sel = isSelected(selection, pos);
+            const clearing = clearingPositions.some((p) => p.row === r && p.col === c);
+            return (
+              <Tile
+                key={`${r},${c}`}
+                val={val}
+                size={tileSize}
+                selected={sel}
+                clearing={clearing}
+                onPress={() => onTilePress(pos)}
+              />
+            );
+          }),
+        )}
+      </div>
     </div>
   );
 }

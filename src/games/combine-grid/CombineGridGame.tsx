@@ -1,4 +1,4 @@
-import React, { useEffect, useReducer, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import Board from './components/Board';
 import ResultScreen from './components/ResultScreen';
 import {
@@ -8,25 +8,35 @@ import {
   ROUND_DURATION_SECS,
   CLEAR_MS,
   ROUND_OVER_AUTOADVANCE_MS,
-  STALEMATE_VALID_THRESHOLD,
 } from './constants';
 import { HUD_TOP_H, HUD_BOT_H, SAFE_MARGIN } from './uiTokens';
-import { GamePhase, Tile, GridPos } from './types';
-import {
-  createBoard,
-  applyGravity,
-  evaluateSelection,
-  generateTarget,
-  hasSolution,
-} from './services/GridService';
+import { GamePhase, GridPos } from './types';
+import { evaluateSelection, hasSolution } from './services/GridService';
 import { toggleTile } from './services/SelectionService';
+import {
+  makePrng,
+  randomSeed,
+  spawnTile,
+  spawnBoard,
+  gridFromSpawn,
+  generateTarget,
+  getProfile,
+  DEFAULT_PROFILE_ID,
+  clearCells,
+} from '../../engine/public';
+import type { EvalMode } from '../../engine/public';
+import { applyGravity } from '../../systems/GravitySystem';
+import { computeTileSize as gridComputeTileSize } from '../../grid/GridSizing';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
 interface CGState {
   phase: GamePhase;
-  mode: 'sum' | 'multiply';
-  board: Tile[][];
+  mode: EvalMode;
+  /** Board as a plain number[][]. 0 = empty cell (during gravity transition). */
+  board: number[][];
+  /** PRNG seed captured at session start — stored for replay readiness. */
+  seed: number;
   selection: GridPos[];
   target: number;
   selectionVal: number;
@@ -36,7 +46,6 @@ interface CGState {
   roundScores: number[];
   timeLeft: number;
   clearingPositions: GridPos[];
-  newTileIds: Set<string>;
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -44,21 +53,36 @@ interface CGState {
 type Action =
   | { type: 'TICK' }
   | { type: 'TAP_TILE'; pos: GridPos }
-  | { type: 'CLEAR_COMPLETE'; board: Tile[][]; newIds: Set<string>; target: number }
-  | { type: 'ADVANCE_ROUND' }
-  | { type: 'RESOLVE_STALEMATE' }
-  | { type: 'PLAY_AGAIN' };
+  | { type: 'CLEAR_COMPLETE'; board: number[][]; target: number }
+  | { type: 'ADVANCE_ROUND'; board: number[][]; target: number }
+  | { type: 'RESOLVE_STALEMATE'; target: number }
+  | { type: 'PLAY_AGAIN'; newState: CGState };
 
 // ── Lazy initializer ──────────────────────────────────────────────────────────
 
-function initGame(): CGState {
-  const board = createBoard();
+/**
+ * Produces the initial CGState for a new session.
+ * Takes profile and prng so PRNG consumption is seeded and recorded.
+ *
+ * [PURITY] Not a reducer. Called once at mount and once per PLAY_AGAIN.
+ * The component owns profile and prngRef — they are passed in so initGame
+ * has no hidden entropy dependencies.
+ */
+function initGame(
+  profile: ReturnType<typeof getProfile>,
+  prng: () => number,
+): CGState {
+  const seed = randomSeed();
+  const spawnedTiles = spawnBoard(ROWS, COLS, profile, prng);
+  const board = gridFromSpawn(ROWS, COLS, spawnedTiles);
+  const target = generateTarget(board, ROWS, COLS, 'sum', profile, prng);
   return {
     phase: 'SELECTING',
     mode: 'sum',
     board,
+    seed,
     selection: [],
-    target: generateTarget(board, 'sum'),
+    target,
     selectionVal: 0,
     score: 0,
     roundScore: 0,
@@ -66,11 +90,14 @@ function initGame(): CGState {
     roundScores: [],
     timeLeft: ROUND_DURATION_SECS,
     clearingPositions: [],
-    newTileIds: new Set(),
   };
 }
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
+//
+// [PURITY CONTRACT] The reducer is a pure function. It never calls Math.random(),
+// Date.now(), or any PRNG. All PRNG-derived values (new boards, new targets)
+// are computed in effects and passed into the reducer via action payloads.
 
 function reducer(state: CGState, action: Action): CGState {
   switch (action.type) {
@@ -106,8 +133,9 @@ function reducer(state: CGState, action: Action): CGState {
 
       // Match! (need at least 2 tiles)
       if (val === state.target && newSel.length >= 2) {
+        // Score = sum of selected values (base points regardless of mode)
         const basePoints = newSel
-          .map(({ r, c }) => state.board[r][c].val)
+          .map(({ row, col }) => state.board[row][col])
           .reduce((a, b) => a + b, 0);
         return {
           ...state,
@@ -124,7 +152,6 @@ function reducer(state: CGState, action: Action): CGState {
     }
 
     case 'CLEAR_COMPLETE': {
-      // Wire stalemate: STALEMATE_VALID_THRESHOLD = 1 means we need ≥1 valid selection
       const solvable = hasSolution(action.board, action.target, state.mode);
       const nextPhase = !solvable
         ? 'STALEMATE'
@@ -135,7 +162,6 @@ function reducer(state: CGState, action: Action): CGState {
         ...state,
         phase: nextPhase,
         board: action.board,
-        newTileIds: action.newIds,
         target: action.target,
         clearingPositions: [],
         selection: [],
@@ -147,57 +173,53 @@ function reducer(state: CGState, action: Action): CGState {
       if (state.roundsCompleted >= ROUNDS_PER_SESSION) {
         return { ...state, phase: 'FINAL' };
       }
-      const board = createBoard();
       return {
         ...state,
         phase: 'SELECTING',
-        board,
-        target: generateTarget(board, state.mode),
+        board: action.board,
+        target: action.target,
         selection: [],
         selectionVal: 0,
         roundScore: 0,
         timeLeft: ROUND_DURATION_SECS,
         clearingPositions: [],
-        newTileIds: new Set(),
       };
     }
 
     case 'RESOLVE_STALEMATE': {
-      // Generate a new target for the same board and resume play
-      const target = generateTarget(state.board, state.mode);
-      return { ...state, phase: 'SELECTING', target };
+      return { ...state, phase: 'SELECTING', target: action.target };
     }
 
     case 'PLAY_AGAIN':
-      return initGame();
+      return action.newState;
 
     default:
       return state;
   }
 }
 
-// ── Tile size — restored to baseline formula ──────────────────────────────────
+// ── Tile size — delegated to GridSizing canonical formula ─────────────────────
 
 function computeTileSize(): number {
-  const availH = window.innerHeight - HUD_TOP_H - HUD_BOT_H - SAFE_MARGIN * 2 - 32;
-  const availW = window.innerWidth - SAFE_MARGIN * 2 - 16;
-  const byH = Math.floor(availH / ROWS);
-  const byW = Math.floor(availW / COLS);
-  return Math.min(byH, byW, 80);
+  const availH = window.innerHeight - HUD_TOP_H - HUD_BOT_H - SAFE_MARGIN * 2;
+  const availW = window.innerWidth - SAFE_MARGIN * 2;
+  return Math.min(gridComputeTileSize(availH, availW, ROWS, COLS), 80);
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
-  const [state, dispatch] = useReducer(reducer, undefined, initGame);
+  // Stable profile and seeded PRNG ref (mirrors SpeedGrid's pattern).
+  const profile = useMemo(() => getProfile(DEFAULT_PROFILE_ID), []);
+  const prngRef = useRef(makePrng(randomSeed()));
+
+  const [state, dispatch] = useReducer(
+    reducer,
+    undefined,
+    () => initGame(profile, prngRef.current),
+  );
   const [tileSize, setTileSize] = useState(computeTileSize);
   const isMounted = useRef(true);
-
-  // Refs for stale-closure safety in setTimeout callbacks
-  const latestBoard = useRef(state.board);
-  const latestClearing = useRef(state.clearingPositions);
-  latestBoard.current = state.board;
-  latestClearing.current = state.clearingPositions;
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
@@ -219,40 +241,92 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     return () => clearInterval(id);
   }, [state.phase]);
 
-  // Clear animation → apply gravity after CLEAR_MS
+  // ── CLEARING effect: gravity + new target ───────────────────────────────────
+  // [PURITY] Captures state from the CLEARING-entry closure. Never reads
+  // stateRef — the phase dependency guarantees a fresh closure per transition.
+
   useEffect(() => {
     if (state.phase !== 'CLEARING') return;
+
+    // Snapshot at CLEARING entry — board still has the clearing tile values
+    // (they're shown as fading via CSS opacity). Zero them for gravity.
+    const currentBoard = state.board;
+    const clearing = state.clearingPositions;
+    const currentMode = state.mode;
+
+    const preGravBoard = clearCells(currentBoard, clearing);
+
+    // Cache each spawn so spawnValue and spawnBonus share the same token.
+    const spawnCache: { value: number; isBonus: boolean }[][] =
+      Array.from({ length: COLS }, () => []);
+
+    const gravResult = applyGravity(
+      preGravBoard,
+      ROWS,
+      COLS,
+      (col, spawnIndex) => {
+        const sp = spawnTile(profile, prngRef.current);
+        spawnCache[col][spawnIndex] = sp;
+        return sp.value;
+      },
+      (col, spawnIndex) => spawnCache[col][spawnIndex]?.isBonus ?? false,
+    );
+
+    const target = generateTarget(
+      gravResult.grid,
+      ROWS,
+      COLS,
+      currentMode,
+      profile,
+      prngRef.current,
+    );
+
     const id = setTimeout(() => {
       if (!isMounted.current) return;
-      const { board: newBoard, newIds } = applyGravity(
-        latestBoard.current,
-        latestClearing.current,
-      );
-      const target = generateTarget(newBoard, 'sum');
-      dispatch({ type: 'CLEAR_COMPLETE', board: newBoard, newIds, target });
+      dispatch({ type: 'CLEAR_COMPLETE', board: gravResult.grid, target });
     }, CLEAR_MS);
-    return () => clearTimeout(id);
-  }, [state.phase]);
 
-  // Auto-advance after ROUND_OVER
+    return () => clearTimeout(id);
+  }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  // [NOTE] profile and prngRef are stable (memo / ref) — omitting is safe.
+
+  // ── ROUND_OVER effect: spawn fresh board for next round ─────────────────────
+
   useEffect(() => {
     if (state.phase !== 'ROUND_OVER') return;
     const id = setTimeout(() => {
       if (!isMounted.current) return;
-      dispatch({ type: 'ADVANCE_ROUND' });
+      const spawnedTiles = spawnBoard(ROWS, COLS, profile, prngRef.current);
+      const board = gridFromSpawn(ROWS, COLS, spawnedTiles);
+      const target = generateTarget(board, ROWS, COLS, 'sum', profile, prngRef.current);
+      dispatch({ type: 'ADVANCE_ROUND', board, target });
     }, ROUND_OVER_AUTOADVANCE_MS);
     return () => clearTimeout(id);
-  }, [state.phase, state.roundsCompleted]);
+  }, [state.phase, state.roundsCompleted]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Stalemate resolution — generate new target and resume
+  // ── STALEMATE effect: generate a new target for the same board ──────────────
+
   useEffect(() => {
     if (state.phase !== 'STALEMATE') return;
+
+    // Capture board from the STALEMATE-entry closure.
+    const currentBoard = state.board;
+    const currentMode = state.mode;
+
     const id = setTimeout(() => {
       if (!isMounted.current) return;
-      dispatch({ type: 'RESOLVE_STALEMATE' });
+      const target = generateTarget(
+        currentBoard,
+        ROWS,
+        COLS,
+        currentMode,
+        profile,
+        prngRef.current,
+      );
+      dispatch({ type: 'RESOLVE_STALEMATE', target });
     }, 1500);
     return () => clearTimeout(id);
-  }, [state.phase]);
+  }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Render: FINAL ───────────────────────────────────────────────────────────
   if (state.phase === 'FINAL') {
@@ -355,7 +429,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
           tileSize={tileSize}
           selection={state.selection}
           clearingPositions={state.clearingPositions}
-          onTilePress={(pos) => dispatch({ type: 'TAP_TILE', pos })}
+          onTilePress={(pos: GridPos) => dispatch({ type: 'TAP_TILE', pos })}
         />
       </div>
 

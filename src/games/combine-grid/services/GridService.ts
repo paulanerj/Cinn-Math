@@ -1,108 +1,45 @@
-// [ROLE] Pure board management functions for CombineGrid.
-// No React. No side effects. All functions take data and return data.
+// [ROLE] Game-local utilities for CombineGrid.
+// Only contains logic that is specific to CombineGrid's tap-select mechanic
+// and has no equivalent in the shared engine layer.
+//
+// Board creation, gravity, and target generation have been removed and are
+// now handled by the engine (SpawnEngine, GravitySystem, TargetGenerator)
+// via the component's effect layer in CombineGridGame.tsx.
+//
+// [INVARIANT] No Math.random() calls. No side effects. Pure functions only.
 
-import { Tile, GridPos } from '../types';
+import { GridPos } from '../types';
+import { evaluate } from '../../../engine/public';
+import type { EvalMode } from '../../../engine/public';
 
-type Mode = 'sum' | 'multiply';
-import { ROWS, COLS, TILE_VAL_MIN, TILE_VAL_MAX } from '../constants';
-
-function makeTile(val: number): Tile {
-  return { id: crypto.randomUUID(), kind: 'number', val };
-}
-
-function randVal(): number {
-  return (
-    Math.floor(Math.random() * (TILE_VAL_MAX - TILE_VAL_MIN + 1)) + TILE_VAL_MIN
-  );
-}
-
-/** Creates a fresh ROWS×COLS board filled with number tiles. */
-export function createBoard(): Tile[][] {
-  return Array.from({ length: ROWS }, () =>
-    Array.from({ length: COLS }, () => makeTile(randVal())),
-  );
-}
-
-/**
- * Applies gravity after clearing the given positions.
- * Cleared columns compact downward; empty slots at top are filled with new tiles.
- * Returns the new board and a Set of IDs for the newly spawned tiles.
- */
-export function applyGravity(
-  board: Tile[][],
-  cleared: GridPos[],
-): { board: Tile[][]; newIds: Set<string> } {
-  const next: (Tile | null)[][] = board.map((row) => [...row]);
-  for (const { r, c } of cleared) {
-    next[r][c] = null;
-  }
-
-  const newIds = new Set<string>();
-
-  for (let c = 0; c < COLS; c++) {
-    // Collect existing tiles in this column, bottom-first
-    const existing: Tile[] = [];
-    for (let r = ROWS - 1; r >= 0; r--) {
-      if (next[r][c] !== null) existing.push(next[r][c]!);
-    }
-    // Fill remaining slots with new tiles
-    while (existing.length < ROWS) {
-      const t = makeTile(randVal());
-      newIds.add(t.id);
-      existing.push(t);
-    }
-    // Write back: existing[0] → bottom row, existing[ROWS-1] → top row
-    for (let r = 0; r < ROWS; r++) {
-      next[r][c] = existing[ROWS - 1 - r];
-    }
-  }
-
-  return { board: next as Tile[][], newIds };
-}
-
-/** Evaluates the arithmetic value of the selected tiles. */
+/** Evaluates the arithmetic value of the selected tiles on a number[][] board. */
 export function evaluateSelection(
-  board: Tile[][],
+  board: number[][],
   selection: GridPos[],
-  mode: Mode,
+  mode: EvalMode,
 ): number {
-  const vals = selection.map(({ r, c }) => board[r][c].val);
-  if (vals.length === 0) return mode === 'sum' ? 0 : 1;
-  return mode === 'sum'
-    ? vals.reduce((a, b) => a + b, 0)
-    : vals.reduce((a, b) => a * b, 1);
+  if (selection.length === 0) return mode === 'sum' ? 0 : 1;
+  const vals = selection.map(({ row, col }) => board[row][col]);
+  return evaluate(vals, mode);
 }
 
 /**
- * Generates a target number that is definitely achievable on this board.
- * Picks 2 or 3 random tiles and returns their sum or product.
+ * Returns true if at least one valid selection of 1, 2, or 3 tiles equals the target.
+ * No adjacency constraint — CombineGrid allows selecting any tiles.
+ *
+ * [NOTE] Intentionally searches non-adjacent combinations because CombineGrid's
+ * TAP_TILE mechanic places no adjacency requirement on selections. This is
+ * consistent with hasSolution being a stalemate detector, not a path validator.
  */
-export function generateTarget(board: Tile[][], mode: Mode): number {
-  const flat: number[] = [];
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      flat.push(board[r][c].val);
-    }
-  }
-  // Shuffle and take 2–3 tiles
-  const shuffled = flat.sort(() => Math.random() - 0.5);
-  const count = Math.random() < 0.5 ? 2 : 3;
-  const chosen = shuffled.slice(0, count);
-  return mode === 'sum'
-    ? chosen.reduce((a, b) => a + b, 0)
-    : chosen.reduce((a, b) => a * b, 1);
-}
-
-/** Returns true if at least one valid selection equals the target. */
 export function hasSolution(
-  board: Tile[][],
+  board: number[][],
   target: number,
-  mode: Mode,
+  mode: EvalMode,
 ): boolean {
   const vals: number[] = [];
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      vals.push(board[r][c].val);
+  for (let r = 0; r < board.length; r++) {
+    for (let c = 0; c < (board[0]?.length ?? 0); c++) {
+      vals.push(board[r][c]);
     }
   }
   for (let i = 0; i < vals.length; i++) {
