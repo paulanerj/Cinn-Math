@@ -32,8 +32,8 @@ import {
   DEFAULT_PROFILE_ID,
 } from '../../../engine/public';
 import type { PracticeProfile } from '../../../engine/PracticeProfile';
-import { applyGravity } from '../../../systems/GravitySystem';
-import { initGame, sgReducer, applyBonusMaskGravity } from '../sgReducer';
+import { runGravityOrchestrator } from '../../../systems/GravityOrchestrator';
+import { initGame, sgReducer } from '../sgReducer';
 import type { SGState, SGAction } from '../types';
 import { ROWS, COLS } from '../constants';
 
@@ -142,44 +142,30 @@ function resolveGravitySync(
   const spawnCache: { value: number; isBonus: boolean }[][] =
     Array.from({ length: COLS }, () => []);
 
-  const gravResult = applyGravity(
-    state.grid,
-    ROWS,
-    COLS,
-    (col: number, spawnIndex: number) => {
+  // Source: clearedPositions from simulateChain() — the positions array
+  // captured at CHAIN_COMMIT, identical to lastClearedPositionsRef in the
+  // component. Passed directly; no fallback (Explicit Survivor Law).
+  const orchResult = runGravityOrchestrator({
+    grid: state.grid,
+    bonusMask: state.bonusMask,
+    clearedPositions,
+    rows: ROWS,
+    cols: COLS,
+    spawnValue: (col: number, spawnIndex: number) => {
       const sp = spawnTile(profile, prng);
       spawnCache[col][spawnIndex] = sp;
       return sp.value;
     },
-    (col: number, spawnIndex: number) => spawnCache[col][spawnIndex].isBonus,
-  );
-
-  // Source: clearedPositions from simulateChain() — the positions array
-  // captured at CHAIN_COMMIT, identical to lastClearedPositionsRef in the
-  // component. Passed directly; no fallback (Explicit Survivor Law).
-  const newBonusMask = applyBonusMaskGravity(
-    state.bonusMask,
-    state.grid,
-    gravResult.spawnBonusMap,
-    ROWS,
-    COLS,
-    clearedPositions,
-  );
-
-  const newTarget = generateTarget(
-    gravResult.grid,
-    ROWS,
-    COLS,
-    state.mode,
-    profile,
-    prng,
-  );
+    spawnBonus: (col: number, spawnIndex: number) => spawnCache[col][spawnIndex].isBonus,
+    generateNextTarget: (settledGrid) =>
+      generateTarget(settledGrid, ROWS, COLS, state.mode, profile, prng),
+  });
 
   return sgReducer(state, {
     type: 'GRAVITY_DONE',
-    grid: gravResult.grid,
-    bonusMask: newBonusMask,
-    target: newTarget,
+    grid: orchResult.grid,
+    bonusMask: orchResult.bonusMask,
+    target: orchResult.target,
   });
 }
 

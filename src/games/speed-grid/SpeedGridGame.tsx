@@ -89,15 +89,13 @@ import {
   initGame,
   sgReducer,
 } from './sgReducer';
-import { applyBonusMaskGravity } from '../../systems/BonusMaskSystem';
-
 // ── System imports ────────────────────────────────────────────────────────────
 import {
   isInWarningZone,
   countdownProgress,
 } from '../../systems/TimerSystem';
 import { nextMultiplier } from '../../systems/ScoreSystem';
-import { applyGravity } from '../../systems/GravitySystem';
+import { runGravityOrchestrator } from '../../systems/GravityOrchestrator';
 import {
   buildGravityFrames,
   gravityAnimTotalMs,
@@ -131,8 +129,6 @@ import ResultScreen from './components/ResultScreen';
 // Material Design "arrow_back"
 const ICON_BACK =
   'M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z';
-
-// (initGame, sgReducer, applyBonusMaskGravity imported from ./sgReducer)
 
 // ── Telemetry types (module-level) ────────────────────────────────────────────
 interface TelemetryEntry { type: string; ms: number }
@@ -300,59 +296,38 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
     const spawnCache: { value: number; isBonus: boolean }[][] =
       Array.from({ length: COLS }, () => []);
 
-    // Apply gravity. spawnBonus is a pure cache lookup — no extra PRNG calls.
-    const gravResult = applyGravity(
-      clearGrid,
-      ROWS,
-      COLS,
-      (col, spawnIndex) => {
+    // [EXPLICIT SURVIVOR LAW — FROZEN, Phase-8 Task-10]
+    // clearedPositions source: lastClearedPositionsRef.current — captured from
+    // stateRef.current.chain.positions immediately before CHAIN_COMMIT
+    // dispatched (see dispatch wrapper above). Satisfies ClearedPositionsLaw
+    // and GravitySnapshotBoundaryLaw.
+    const orchResult = runGravityOrchestrator({
+      grid: clearGrid,
+      bonusMask: clearMask,
+      clearedPositions: lastClearedPositionsRef.current,
+      rows: ROWS,
+      cols: COLS,
+      spawnValue: (col, spawnIndex) => {
         const sp = spawnTile(profile, prngRef.current);
         spawnCache[col][spawnIndex] = sp;
         return sp.value;
       },
-      (col, spawnIndex) => spawnCache[col][spawnIndex].isBonus,
-    );
+      spawnBonus: (col, spawnIndex) => spawnCache[col][spawnIndex].isBonus,
+      generateNextTarget: (settledGrid) =>
+        generateTarget(settledGrid, ROWS, COLS, clearMode, profile, prngRef.current),
+    });
 
     // Telemetry: count gravity event + tiles spawned this cycle.
     telemetryRef.current.gravityEvents += 1;
-    telemetryRef.current.spawnEvents += gravResult.spawnBonusMap.reduce(
+    telemetryRef.current.spawnEvents += orchResult.spawnBonusMap.reduce(
       (sum, col) => sum + col.length,
       0,
     );
 
-    // [EXPLICIT SURVIVOR LAW — FROZEN, Phase-8 Task-10]
-    // Survivor semantics are explicit-only. clearedPositions is authoritative.
-    // Replay derives clearedPositions from the commit snapshot (chain.positions
-    // captured before CHAIN_COMMIT). Zero-inference has been permanently removed.
-    //
-    // Source: lastClearedPositionsRef.current — captured from
-    // stateRef.current.chain.positions immediately before CHAIN_COMMIT
-    // dispatched (see dispatch wrapper above).  This is the authoritative
-    // CLEARING snapshot: positions taken after commit but before gravity,
-    // satisfying ClearedPositionsLaw and GravitySnapshotBoundaryLaw.
-    const newBonusMask = applyBonusMaskGravity(
-      clearMask,
-      clearGrid,
-      gravResult.spawnBonusMap,
-      ROWS,
-      COLS,
-      lastClearedPositionsRef.current,
-    );
-
-    // Generate next target from the settled board.
-    const newTarget = generateTarget(
-      gravResult.grid,
-      ROWS,
-      COLS,
-      clearMode,
-      profile,
-      prngRef.current,
-    );
-
     // Compute animation duration and wait before re-enabling input.
     const frames = buildGravityFrames(
-      gravResult.fallingTiles,
-      gravResult.spawnedPositions,
+      orchResult.fallingTiles,
+      orchResult.spawnedPositions,
     );
     const animMs = Math.max(gravityAnimTotalMs(frames), 350);
 
@@ -360,9 +335,9 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
       if (!cancelled) {
         dispatch({
           type: 'GRAVITY_DONE',
-          grid: gravResult.grid,
-          bonusMask: newBonusMask,
-          target: newTarget,
+          grid: orchResult.grid,
+          bonusMask: orchResult.bonusMask,
+          target: orchResult.target,
         });
       }
     }, animMs);
