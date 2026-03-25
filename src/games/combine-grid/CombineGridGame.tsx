@@ -62,17 +62,21 @@ type Action =
 
 /**
  * Produces the initial CGState for a new session.
- * Takes profile and prng so PRNG consumption is seeded and recorded.
+ * Takes profile, prng, and seed so PRNG consumption is seeded and recorded.
  *
  * [PURITY] Not a reducer. Called once at mount and once per PLAY_AGAIN.
  * The component owns profile and prngRef — they are passed in so initGame
  * has no hidden entropy dependencies.
+ *
+ * [SEED LAW] seed must be the exact uint32 used to construct prng via makePrng(seed).
+ * CGState.seed stores this value for replay. Do NOT call randomSeed() here —
+ * the caller is the entropy authority (Phase-8 Task-17 fix).
  */
 function initGame(
   profile: ReturnType<typeof getProfile>,
   prng: () => number,
+  seed: number,
 ): CGState {
-  const seed = randomSeed();
   const spawnedTiles = spawnBoard(ROWS, COLS, profile, prng);
   const board = gridFromSpawn(ROWS, COLS, spawnedTiles);
   const target = generateTarget(board, ROWS, COLS, 'sum', profile, prng);
@@ -211,12 +215,17 @@ function computeTileSize(): number {
 export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
   // Stable profile and seeded PRNG ref (mirrors SpeedGrid's pattern).
   const profile = useMemo(() => getProfile(DEFAULT_PROFILE_ID), []);
-  const prngRef = useRef(makePrng(randomSeed()));
+  // [SEED LAW — Phase-8 Task-17] Capture seed before constructing PRNG so both
+  // prngRef and CGState.seed are bound to the exact same uint32. prngSeedRef holds
+  // the seed; prngRef holds the PRNG built from it. The lazy reducer initializer
+  // passes both into initGame so CGState.seed === the runtime PRNG seed.
+  const prngSeedRef = useRef(randomSeed());
+  const prngRef = useRef(makePrng(prngSeedRef.current));
 
   const [state, dispatch] = useReducer(
     reducer,
     undefined,
-    () => initGame(profile, prngRef.current),
+    () => initGame(profile, prngRef.current, prngSeedRef.current),
   );
   const [tileSize, setTileSize] = useState(computeTileSize);
   const isMounted = useRef(true);
