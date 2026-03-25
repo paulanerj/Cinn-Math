@@ -25,7 +25,7 @@ import {
   clearCells,
 } from '../../engine/public';
 import type { EvalMode } from '../../engine/public';
-import { applyGravity } from '../../systems/GravitySystem';
+import { runGravityOrchestrator } from '../../systems/GravityOrchestrator';
 import { computeTileSize as gridComputeTileSize } from '../../grid/GridSizing';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -269,30 +269,38 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     const spawnCache: { value: number; isBonus: boolean }[][] =
       Array.from({ length: COLS }, () => []);
 
-    const gravResult = applyGravity(
-      preGravBoard,
-      ROWS,
-      COLS,
-      (col, spawnIndex) => {
+    // [GRAVITY ORCHESTRATOR — Phase-8 Task-19]
+    // CombineGrid has no bonusMask yet; pass an all-false shim so the
+    // orchestrator's applyBonusMaskGravity step is a pure no-op.
+    // orchResult.bonusMask is computed but intentionally not consumed —
+    // CLEAR_COMPLETE carries only board + target (unchanged contract).
+    // PRNG token order is identical to the previous direct applyGravity call:
+    //   Step 1 (applyGravity)       — same spawnValue/spawnBonus callbacks
+    //   Step 2 (applyBonusMaskGravity) — zero PRNG tokens
+    //   Step 3 (generateNextTarget) — same generateTarget call
+    const emptyBonusMask: boolean[][] = Array.from({ length: ROWS }, () =>
+      Array(COLS).fill(false),
+    );
+
+    const orchResult = runGravityOrchestrator({
+      grid: preGravBoard,
+      bonusMask: emptyBonusMask,
+      clearedPositions: clearing,
+      rows: ROWS,
+      cols: COLS,
+      spawnValue: (col, spawnIndex) => {
         const sp = spawnTile(profile, prngRef.current);
         spawnCache[col][spawnIndex] = sp;
         return sp.value;
       },
-      (col, spawnIndex) => spawnCache[col][spawnIndex]?.isBonus ?? false,
-    );
-
-    const target = generateTarget(
-      gravResult.grid,
-      ROWS,
-      COLS,
-      currentMode,
-      profile,
-      prngRef.current,
-    );
+      spawnBonus: (col, spawnIndex) => spawnCache[col][spawnIndex]?.isBonus ?? false,
+      generateNextTarget: (settledGrid) =>
+        generateTarget(settledGrid, ROWS, COLS, currentMode, profile, prngRef.current),
+    });
 
     const id = setTimeout(() => {
       if (!isMounted.current) return;
-      dispatch({ type: 'CLEAR_COMPLETE', board: gravResult.grid, target });
+      dispatch({ type: 'CLEAR_COMPLETE', board: orchResult.grid, target: orchResult.target });
     }, CLEAR_MS);
 
     return () => clearTimeout(id);
