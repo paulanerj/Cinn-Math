@@ -1,11 +1,19 @@
 // [ROLE] Session state for a single GridMath game session.
-// Tracks the running score, round count, best score (persisted across sessions),
-// and the seed used for this session's PRNG (needed for replay).
+// Tracks the running score, round count, best score, and the seed used for
+// this session's PRNG (needed for replay).
 //
 // [WHY] Separating session bookkeeping from game rules keeps both layers clean.
 // The engine can increment the score without knowing anything about how
 // CombineGrid or SpeedGrid defines a "match". Games call addScore() and the
-// session handles persistence and best-score tracking.
+// session tracks cumulative score and best-score state.
+//
+// [PURITY CONTRACT — Phase-8 Task-18]
+// This module is pure: no localStorage, no DOM, no browser globals.
+// Best-score persistence is the caller's responsibility. The component layer
+// reads bestScore from storage before calling createSession(), and writes it
+// back after addScore() when the returned bestScore exceeds the previous value.
+// This keeps EngineSession portable across Node.js, Web Workers, SSR, and any
+// future headless execution context.
 //
 // [FUTURE] When a new game mode adds a "lives" mechanic, add it to EngineSession
 // here rather than in the game file, so the platform HUD can display it
@@ -20,13 +28,15 @@
 //             the session's PRNG — it must be stored before any PRNG calls
 //             are made so that the session can be replayed.
 
-const BEST_SCORE_KEY = 'gridmath_bestScore';
-
 /** All state the engine tracks across a single play session. */
 export interface EngineSession {
   /** Current score for this session. */
   score: number;
-  /** Best score ever achieved (loaded from localStorage on creation). */
+  /**
+   * Best score ever achieved. Supplied by the caller at session creation
+   * (loaded from platform storage) and updated in-memory by addScore().
+   * The caller is responsible for persisting the new value when it changes.
+   */
   bestScore: number;
   /** Number of rounds completed successfully this session. */
   roundsCompleted: number;
@@ -43,9 +53,14 @@ export interface EngineSession {
  *
  * @param seed       The uint32 PRNG seed (from rng.randomSeed()).
  * @param profileId  The active practice profile id.
+ * @param bestScore  All-time best score, loaded by the caller from platform
+ *                   storage before calling this function. Defaults to 0.
  */
-export function createSession(seed: number, profileId: string): EngineSession {
-  const bestScore = loadBestScore();
+export function createSession(
+  seed: number,
+  profileId: string,
+  bestScore = 0,
+): EngineSession {
   return {
     score: 0,
     bestScore,
@@ -58,16 +73,15 @@ export function createSession(seed: number, profileId: string): EngineSession {
 
 /**
  * Returns a new session with score incremented by `delta`.
- * Best score is updated and persisted if the new score exceeds it.
+ * Updates bestScore in-memory if the new score exceeds it.
+ * The caller is responsible for persisting bestScore when it changes
+ * (i.e. when returned session.bestScore > the previous session.bestScore).
  *
  * [INVARIANT] delta may be negative (penalty mechanics). Score is clamped to 0.
  */
 export function addScore(session: EngineSession, delta: number): EngineSession {
   const score = Math.max(0, session.score + delta);
   const bestScore = Math.max(session.bestScore, score);
-  if (bestScore > session.bestScore) {
-    saveBestScore(bestScore);
-  }
   return { ...session, score, bestScore };
 }
 
@@ -85,23 +99,4 @@ export function incrementRound(session: EngineSession): EngineSession {
  */
 export function elapsedMs(session: EngineSession, now: number = Date.now()): number {
   return Math.max(0, now - session.startedAt);
-}
-
-// ── Persistence helpers ───────────────────────────────────────────────────────
-
-function loadBestScore(): number {
-  try {
-    const raw = localStorage.getItem(BEST_SCORE_KEY);
-    return raw ? Math.max(0, parseInt(raw, 10)) : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function saveBestScore(score: number): void {
-  try {
-    localStorage.setItem(BEST_SCORE_KEY, String(score));
-  } catch {
-    // Silently ignore storage errors (private browsing mode, quota exceeded).
-  }
 }
