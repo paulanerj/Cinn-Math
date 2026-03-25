@@ -228,6 +228,24 @@ function countBonuses(mask: boolean[][]): number {
   return mask.reduce((sum, row) => sum + row.filter(Boolean).length, 0);
 }
 
+// [Task-20 — Phase-8] Counting PRNG wrapper for replay determinism tests.
+// Wraps makePrng to track the total number of prng() calls made during a run.
+// [INVARIANT] Test-only — never imported by production code.
+function makeCountingPrng(seed: number): {
+  prng: () => number;
+  tokenCount: () => number;
+} {
+  const inner = makePrng(seed);
+  let count = 0;
+  return {
+    prng: () => {
+      count++;
+      return inner();
+    },
+    tokenCount: () => count,
+  };
+}
+
 // ── SGHarness ─────────────────────────────────────────────────────────────────
 
 export class SGHarness {
@@ -652,6 +670,98 @@ export class SGHarness {
         o1.state.chain.positions.length === o2.state.chain.positions.length,
         'Reducer output chain length differs',
       );
+    });
+
+    // ── Category 11: Replay determinism — PRNG token accounting ──────────
+    //
+    // [Task-20 — Phase-8] Verify that two independent sessions driven from the
+    // same seed consume the exact same number of PRNG tokens at every gravity
+    // cycle boundary, and produce the same target sequence. Any divergence in
+    // token consumption would produce a different board/target immediately.
+    //
+    // Implementation strategy: use makeCountingPrng() to wrap the PRNG so each
+    // prng() call increments a counter. Run session A and session B from the
+    // same seed through identical action sequences; compare per-cycle snapshots.
+
+    run('VM-26: initGame consumes identical PRNG token count from same seed', () => {
+      const cpA = makeCountingPrng(12345);
+      const cpB = makeCountingPrng(12345);
+      const profile = getProfile(DEFAULT_PROFILE_ID);
+      initGame(profile, cpA.prng);
+      initGame(profile, cpB.prng);
+      if (cpA.tokenCount() !== cpB.tokenCount()) {
+        throw new Error(
+          `Token count divergence after initGame: A=${cpA.tokenCount()} B=${cpB.tokenCount()}`,
+        );
+      }
+      if (cpA.tokenCount() === 0) {
+        throw new Error('initGame consumed zero PRNG tokens — check prng injection');
+      }
+    });
+
+    run('VM-27: per-cycle PRNG token count and target match for 10 gravity cycles', () => {
+      const TEST_SEED = 77777;
+      const NUM_CYCLES = 10;
+      const profile = getProfile(DEFAULT_PROFILE_ID);
+
+      type CycleSnapshot = { tokenCount: number; target: number };
+
+      function runSession(): CycleSnapshot[] {
+        const cp = makeCountingPrng(TEST_SEED);
+        let state = initGame(profile, cp.prng);
+        // Activate the timer: WAITING_TO_START → PLAYING.
+        state = sgReducer(state, { type: 'CHAIN_START', pos: { row: 0, col: 0 } });
+
+        const snapshots: CycleSnapshot[] = [];
+
+        for (let cycle = 0; cycle < NUM_CYCLES; cycle++) {
+          if (state.phase === 'GAME_OVER') break;
+
+          const pair = findAdjacentPairForTarget(state.grid, state.target);
+          if (!pair) break; // No solvable pair — board is degenerate.
+
+          // Commit a valid 2-tile chain (CHAIN_MIN_LENGTH = 2).
+          state = sgReducer(state, { type: 'CHAIN_START', pos: pair[0] });
+          state = sgReducer(state, { type: 'CHAIN_EXTEND', pos: pair[1] });
+          const clearedPositions = [pair[0], pair[1]];
+          state = sgReducer(state, { type: 'CHAIN_COMMIT' });
+
+          if (state.phase !== 'CLEARING') break; // Unexpected: abort cleanly.
+
+          // Gravity resolution — the only phase that consumes PRNG tokens.
+          state = resolveGravitySync(state, cp.prng, profile, clearedPositions);
+          snapshots.push({ tokenCount: cp.tokenCount(), target: state.target });
+        }
+
+        return snapshots;
+      }
+
+      const snapshotsA = runSession();
+      const snapshotsB = runSession();
+
+      if (snapshotsA.length === 0) {
+        throw new Error('Session A completed zero cycles — seed or board is degenerate');
+      }
+      if (snapshotsA.length !== snapshotsB.length) {
+        throw new Error(
+          `Cycle count mismatch: A=${snapshotsA.length} B=${snapshotsB.length}`,
+        );
+      }
+
+      for (let i = 0; i < snapshotsA.length; i++) {
+        if (snapshotsA[i].tokenCount !== snapshotsB[i].tokenCount) {
+          throw new Error(
+            `PRNG token count divergence at cycle ${i + 1}: ` +
+              `A=${snapshotsA[i].tokenCount} B=${snapshotsB[i].tokenCount}`,
+          );
+        }
+        if (snapshotsA[i].target !== snapshotsB[i].target) {
+          throw new Error(
+            `Target divergence at cycle ${i + 1}: ` +
+              `A=${snapshotsA[i].target} B=${snapshotsB[i].target}`,
+          );
+        }
+      }
     });
 
     const passed = results.filter((r) => r.pass).length;
