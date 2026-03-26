@@ -21,7 +21,6 @@ import {
   generateTarget,
   getProfile,
   DEFAULT_PROFILE_ID,
-  clearCells,
 } from '../../engine/public';
 import { runGravityOrchestrator } from '../../systems/GravityOrchestrator';
 import { computeTileSize as gridComputeTileSize } from '../../grid/GridSizing';
@@ -81,13 +80,13 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
   useEffect(() => {
     if (state.phase !== 'CLEARING') return;
 
-    // Snapshot at CLEARING entry — board still has the clearing tile values
-    // (they're shown as fading via CSS opacity). Zero them for gravity.
+    // Snapshot at CLEARING entry — board already has cleared cells zeroed
+    // (reducer applied clearCells in TAP_TILE before transitioning to CLEARING).
     const currentBoard = state.board;
     const clearing = state.clearingPositions;
     const currentMode = state.mode;
 
-    const preGravBoard = clearCells(currentBoard, clearing);
+    const preGravBoard = currentBoard;
 
     // Cache each spawn so spawnValue and spawnBonus share the same token.
     const spawnCache: { value: number; isBonus: boolean }[][] =
