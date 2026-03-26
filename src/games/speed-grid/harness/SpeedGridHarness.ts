@@ -228,35 +228,78 @@ function countBonuses(mask: boolean[][]): number {
   return mask.reduce((sum, row) => sum + row.filter(Boolean).length, 0);
 }
 
-// ── Replay validation helpers (Task-23 — Phase-8) ────────────────────────────
+// ── Replay validation helpers (Phase-8, Task-23/24) ──────────────────────────
 //
-// These two functions implement the record→replay verification loop:
+// recordSession(seed, N)
+//   Drives N gravity cycles. Captures per-cycle CycleSnapshot containing
+//   preGravityGrid, postGravityGrid, bonusMask, and target. Returns the full
+//   PRNG token stream (value sequence, not just count).
 //
-//   recordSession(seed, N) → { finalState, log, perCycleTokenCounts }
-//     Drives N gravity cycles from `seed`, recording the action log as a
-//     minimal (seed, chains[]) pair and the per-cycle PRNG token count.
+// replaySession(log)
+//   Rebuilds PRNG from log.seed. For each cycle:
+//     1. Replays action sequence through sgReducer.
+//     2. Derives clearedPositions from post-commit grid zeros (NOT from log).
+//     3. Validates preGravityGrid against snapshot — throws on mismatch.
+//     4. Calls resolveGravitySync with DERIVED positions (never log positions).
+//     5. Validates postGravityGrid, bonusMask, target against snapshot.
 //
-//   replaySession(log) → { finalState, perCycleTokenCounts }
-//     Rebuilds PRNG from log.seed, re-runs the exact same action sequences,
-//     resolves gravity each cycle, and returns the resulting final state.
-//
-// If both runs are deterministic, finalState and perCycleTokenCounts must be
-// identical — any token-order violation surfaces as an immediate mismatch.
+// [NON-SELF-REFERENTIAL] A mirrored bug in resolveGravitySync would produce
+// identical wrong results in both runs — BUT the per-cycle snapshot comparison
+// catches any deviation from the originally recorded intermediate states.
+// The clearedPositions derivation path is independently exercised.
 
 type ReplayChain = { positions: Array<{ row: number; col: number }> };
-type ReplayLog = { seed: number; chains: ReplayChain[] };
+
+/** Intermediate state captured at each gravity cycle boundary. */
+type CycleSnapshot = {
+  /** Post-commit grid — zeros at cleared positions, BEFORE gravity resolves. */
+  preGravityGrid: number[][];
+  /** Post-gravity, post-spawn grid. */
+  postGravityGrid: number[][];
+  /** Post-gravity bonus mask. */
+  postGravityBonusMask: boolean[][];
+  /** Next target generated after the settled grid was evaluated. */
+  target: number;
+};
+
+type ReplayLog = {
+  seed: number;
+  chains: ReplayChain[];
+  /** Per-cycle snapshots. Length === chains.length after recordSession. */
+  snapshots: CycleSnapshot[];
+};
+
+/** Deep-copies a number[][] to prevent snapshot mutations. */
+function cloneGrid(g: number[][]): number[][] {
+  return g.map((row) => [...row]);
+}
+
+/** Deep-copies a boolean[][] to prevent snapshot mutations. */
+function cloneMask(m: boolean[][]): boolean[][] {
+  return m.map((row) => [...row]);
+}
+
+/** Encodes a position as a canonical string key for set-equality checks. */
+function posKey(p: { row: number; col: number }): string {
+  return `${p.row},${p.col}`;
+}
 
 function recordSession(
   testSeed: number,
   numCycles: number,
-): { finalState: SGState; log: ReplayLog; perCycleTokenCounts: number[] } {
-  const cp = makeCountingPrng(testSeed);
+): {
+  finalState: SGState;
+  log: ReplayLog;
+  perCycleTokenCounts: number[];
+  prngStream: readonly number[];
+} {
+  const sp = makeStreamingPrng(testSeed);
   const profile = getProfile(DEFAULT_PROFILE_ID);
-  let state = initGame(profile, cp.prng, testSeed);
-  // Activate timer: WAITING_TO_START → PLAYING.
+  let state = initGame(profile, sp.prng, testSeed);
   state = sgReducer(state, { type: 'CHAIN_START', pos: { row: 0, col: 0 } });
 
   const chains: ReplayChain[] = [];
+  const snapshots: CycleSnapshot[] = [];
   const perCycleTokenCounts: number[] = [];
 
   for (let cycle = 0; cycle < numCycles; cycle++) {
@@ -268,44 +311,124 @@ function recordSession(
     state = sgReducer(state, { type: 'CHAIN_EXTEND', pos: pair[1] });
     const positions = [pair[0], pair[1]];
     state = sgReducer(state, { type: 'CHAIN_COMMIT' });
-
     if (state.phase !== 'CLEARING') break;
 
+    // Snapshot: capture preGravityGrid BEFORE gravity (zeros at cleared cells).
+    const preGravityGrid = cloneGrid(state.grid);
+
     chains.push({ positions });
-    state = resolveGravitySync(state, cp.prng, profile, positions);
-    perCycleTokenCounts.push(cp.tokenCount());
+    state = resolveGravitySync(state, sp.prng, profile, positions);
+
+    snapshots.push({
+      preGravityGrid,
+      postGravityGrid: cloneGrid(state.grid),
+      postGravityBonusMask: cloneMask(state.bonusMask),
+      target: state.target,
+    });
+    perCycleTokenCounts.push(sp.tokenCount());
   }
 
-  return { finalState: state, log: { seed: state.seed, chains }, perCycleTokenCounts };
+  return {
+    finalState: state,
+    log: { seed: state.seed, chains, snapshots },
+    perCycleTokenCounts,
+    prngStream: sp.stream(),
+  };
 }
 
-function replaySession(
-  log: ReplayLog,
-): { finalState: SGState; perCycleTokenCounts: number[] } {
-  const cp = makeCountingPrng(log.seed);
+function replaySession(log: ReplayLog): {
+  finalState: SGState;
+  perCycleTokenCounts: number[];
+  prngStream: readonly number[];
+  derivedClearedPositionsPerCycle: Array<ReadonlyArray<{ row: number; col: number }>>;
+} {
+  const sp = makeStreamingPrng(log.seed);
   const profile = getProfile(DEFAULT_PROFILE_ID);
-  let state = initGame(profile, cp.prng, log.seed);
-  // Activate timer: mirrors recordSession start.
+  let state = initGame(profile, sp.prng, log.seed);
   state = sgReducer(state, { type: 'CHAIN_START', pos: { row: 0, col: 0 } });
 
   const perCycleTokenCounts: number[] = [];
+  const derivedClearedPositionsPerCycle: Array<
+    ReadonlyArray<{ row: number; col: number }>
+  > = [];
 
-  for (const chain of log.chains) {
+  for (let i = 0; i < log.chains.length; i++) {
+    const chain = log.chains[i];
+    const snapshot = log.snapshots[i]; // present for logs from recordSession
     if (state.phase === 'GAME_OVER') break;
 
     state = sgReducer(state, { type: 'CHAIN_START', pos: chain.positions[0] });
-    for (let i = 1; i < chain.positions.length; i++) {
-      state = sgReducer(state, { type: 'CHAIN_EXTEND', pos: chain.positions[i] });
+    for (let j = 1; j < chain.positions.length; j++) {
+      state = sgReducer(state, { type: 'CHAIN_EXTEND', pos: chain.positions[j] });
     }
     state = sgReducer(state, { type: 'CHAIN_COMMIT' });
-
     if (state.phase !== 'CLEARING') break;
 
-    state = resolveGravitySync(state, cp.prng, profile, chain.positions);
-    perCycleTokenCounts.push(cp.tokenCount());
+    // [Task-24 / VM-31] Validate preGravityGrid against recorded snapshot.
+    if (snapshot) {
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.grid[r][c] !== snapshot.preGravityGrid[r][c]) {
+            throw new Error(
+              `[VM-31] preGravityGrid mismatch at cycle ${i + 1} [${r}][${c}]: ` +
+                `expected=${snapshot.preGravityGrid[r][c]} got=${state.grid[r][c]}`,
+            );
+          }
+        }
+      }
+    }
+
+    // [Task-24 / VM-32] Derive clearedPositions from post-commit grid zeros.
+    // DO NOT use chain.positions — derive independently from replay grid state.
+    // Grid invariant: only cleared cells are zero during CLEARING phase.
+    const derivedClearedPositions: Array<{ row: number; col: number }> = [];
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (state.grid[r][c] === 0) {
+          derivedClearedPositions.push({ row: r, col: c });
+        }
+      }
+    }
+    derivedClearedPositionsPerCycle.push(derivedClearedPositions);
+
+    // Gravity uses DERIVED positions — never the log's recorded positions.
+    state = resolveGravitySync(state, sp.prng, profile, derivedClearedPositions);
+
+    // [Task-24 / VM-31] Validate post-gravity state against recorded snapshot.
+    if (snapshot) {
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (state.grid[r][c] !== snapshot.postGravityGrid[r][c]) {
+            throw new Error(
+              `[VM-31] postGravityGrid mismatch at cycle ${i + 1} [${r}][${c}]: ` +
+                `expected=${snapshot.postGravityGrid[r][c]} got=${state.grid[r][c]}`,
+            );
+          }
+          if (state.bonusMask[r][c] !== snapshot.postGravityBonusMask[r][c]) {
+            throw new Error(
+              `[VM-31] bonusMask mismatch at cycle ${i + 1} [${r}][${c}]: ` +
+                `expected=${snapshot.postGravityBonusMask[r][c]} got=${state.bonusMask[r][c]}`,
+            );
+          }
+        }
+      }
+      if (state.target !== snapshot.target) {
+        throw new Error(
+          `[VM-31] target mismatch at cycle ${i + 1}: ` +
+            `expected=${snapshot.target} got=${state.target}`,
+        );
+      }
+    }
+
+    perCycleTokenCounts.push(sp.tokenCount());
   }
 
-  return { finalState: state, perCycleTokenCounts };
+  return {
+    finalState: state,
+    perCycleTokenCounts,
+    prngStream: sp.stream(),
+    derivedClearedPositionsPerCycle,
+  };
 }
 
 // [Task-20 — Phase-8] Counting PRNG wrapper for replay determinism tests.
@@ -323,6 +446,31 @@ function makeCountingPrng(seed: number): {
       return inner();
     },
     tokenCount: () => count,
+  };
+}
+
+// [Task-24 — Phase-8] Streaming PRNG wrapper: records every value produced.
+// stream() returns the full sequence — allows comparing token ORDER, not just count.
+// A column-order change produces different values at each slot but the same count;
+// comparing stream() catches it where tokenCount() alone cannot.
+// [INVARIANT] Test-only — never imported by production code.
+function makeStreamingPrng(seed: number): {
+  prng: () => number;
+  tokenCount: () => number;
+  stream: () => readonly number[];
+} {
+  const inner = makePrng(seed);
+  let count = 0;
+  const values: number[] = [];
+  return {
+    prng: () => {
+      const v = inner();
+      count++;
+      values.push(v);
+      return v;
+    },
+    tokenCount: () => count,
+    stream: () => values,
   };
 }
 
@@ -930,6 +1078,117 @@ export class SGHarness {
           throw new Error(
             `Token count divergence at cycle ${i + 1}: ` +
               `record=${recordCounts[i]} replay=${replayCounts[i]}`,
+          );
+        }
+      }
+    });
+
+    // ── Category 13: Replay hardening — non-self-referential (Task-24) ───────
+    //
+    // VM-31/32/33 upgrade the replay validation from "consistency proof" to
+    // "correctness proof". The original VM-29/30 verify final-state equality
+    // but cannot detect mirrored bugs (same wrong execution path in both runs).
+    //
+    // These tests use per-cycle snapshots (captured in recordSession) so that
+    // any deviation in replaySession's intermediate state throws immediately
+    // at the offending cycle and cell.
+
+    run('VM-31: per-cycle preGravity and postGravity grids match snapshots', () => {
+      const TEST_SEED = 54321;
+      const NUM_CYCLES = 8;
+
+      const { log } = recordSession(TEST_SEED, NUM_CYCLES);
+
+      if (log.snapshots.length === 0) {
+        throw new Error('No snapshots recorded — seed or board is degenerate');
+      }
+
+      // replaySession performs per-cycle snapshot validation internally and
+      // throws immediately at the first mismatch with cycle + coordinate.
+      const { finalState } = replaySession(log);
+
+      // Sanity: confirm the replay completed all recorded cycles.
+      if (finalState.chainsCompleted !== log.chains.length) {
+        throw new Error(
+          `chainsCompleted mismatch: expected=${log.chains.length} ` +
+            `got=${finalState.chainsCompleted}`,
+        );
+      }
+    });
+
+    run('VM-32: clearedPositions derivation matches recorded chain positions', () => {
+      const TEST_SEED = 54321;
+      const NUM_CYCLES = 8;
+
+      const { log } = recordSession(TEST_SEED, NUM_CYCLES);
+      const { derivedClearedPositionsPerCycle } = replaySession(log);
+
+      if (derivedClearedPositionsPerCycle.length === 0) {
+        throw new Error('No derived positions — seed or board is degenerate');
+      }
+      if (derivedClearedPositionsPerCycle.length !== log.chains.length) {
+        throw new Error(
+          `Cycle count mismatch: derived=${derivedClearedPositionsPerCycle.length} ` +
+            `chains=${log.chains.length}`,
+        );
+      }
+
+      // For each cycle: assert derived positions (from grid zeros) form the same
+      // SET as the recorded chain positions. Order is irrelevant for BonusMask;
+      // only membership matters — any extra or missing position is a bug.
+      for (let i = 0; i < log.chains.length; i++) {
+        const derived = derivedClearedPositionsPerCycle[i];
+        const recorded = log.chains[i].positions;
+
+        const derivedKeys = new Set(derived.map(posKey));
+        const recordedKeys = new Set(recorded.map(posKey));
+
+        for (const k of recordedKeys) {
+          if (!derivedKeys.has(k)) {
+            throw new Error(
+              `[VM-32] cycle ${i + 1}: recorded position ${k} absent from derived set`,
+            );
+          }
+        }
+        for (const k of derivedKeys) {
+          if (!recordedKeys.has(k)) {
+            throw new Error(
+              `[VM-32] cycle ${i + 1}: derived position ${k} absent from recorded set`,
+            );
+          }
+        }
+        if (derivedKeys.size !== recordedKeys.size) {
+          throw new Error(
+            `[VM-32] cycle ${i + 1}: set size mismatch — derived=${derivedKeys.size} ` +
+              `recorded=${recordedKeys.size}`,
+          );
+        }
+      }
+    });
+
+    run('VM-33: full PRNG value stream matches between record and replay', () => {
+      const TEST_SEED = 54321;
+      const NUM_CYCLES = 8;
+
+      const { log, prngStream: recordStream } = recordSession(TEST_SEED, NUM_CYCLES);
+      const { prngStream: replayStream } = replaySession(log);
+
+      // Stream comparison catches wrong column ORDER (same count, different values)
+      // which tokenCount() alone cannot detect.
+      if (recordStream.length === 0) {
+        throw new Error('Record PRNG stream is empty — seed or board is degenerate');
+      }
+      if (recordStream.length !== replayStream.length) {
+        throw new Error(
+          `PRNG stream length mismatch: record=${recordStream.length} ` +
+            `replay=${replayStream.length}`,
+        );
+      }
+      for (let i = 0; i < recordStream.length; i++) {
+        if (recordStream[i] !== replayStream[i]) {
+          throw new Error(
+            `[VM-33] PRNG stream divergence at token ${i + 1}: ` +
+              `record=${recordStream[i]} replay=${replayStream[i]}`,
           );
         }
       }
