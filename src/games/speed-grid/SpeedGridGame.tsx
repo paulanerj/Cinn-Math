@@ -82,6 +82,8 @@ import {
   evaluate,
   getProfile,
   DEFAULT_PROFILE_ID,
+  createSession,
+  addScore,
 } from '../../engine/public';
 
 // ── Reducer + initGame (pure, extracted for testability) ─────────────────────
@@ -152,20 +154,43 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
   // ── PRNG and profile ───────────────────────────────────────────────────────
 
   const profile = useMemo(() => getProfile(DEFAULT_PROFILE_ID), []);
-  const prngRef = useRef(makePrng(randomSeed()));
+
+  // [SEED LAW — Phase-8 Task-22] Capture seed before building PRNG so both
+  // prngRef and SGState.seed are bound to the exact same uint32.
+  // prngSeedRef holds the raw seed; prngRef holds the PRNG built from it.
+  // The lazy reducer initializer closes over prngSeedRef (the ref object, stable)
+  // and reads .current when called on first render — same value as used for prngRef.
+  const prngSeedRef = useRef(randomSeed());
+  const prngRef = useRef(makePrng(prngSeedRef.current));
 
   // ── Reducer ────────────────────────────────────────────────────────────────
 
   const [state, rawDispatch] = useReducer(
     sgReducer,
     undefined,
-    () => initGame(profile, prngRef.current),
+    () => initGame(profile, prngRef.current, prngSeedRef.current),
   );
 
   // stateRef mirrors state so effects can read the latest values without
   // listing every field as a dependency.
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  // [ENGINESESSION — Phase-8 Task-22] In-memory session bookkeeping.
+  // bestScore starts at 0 (no persistence — caller responsibility per Task-18).
+  // sessionRef is not part of React state — it is a side-channel record that
+  // mirrors SGState.score for the EngineSession layer.
+  const sessionRef = useRef(createSession(prngSeedRef.current, DEFAULT_PROFILE_ID));
+
+  // Sync EngineSession score with SGState score after each scoring event.
+  // addScore(delta) accumulates correctly: if session.score = 50 and new
+  // SGState score = 75, delta = 25 — matching the points awarded that cycle.
+  useEffect(() => {
+    const delta = state.score.score - sessionRef.current.score;
+    if (delta !== 0) {
+      sessionRef.current = addScore(sessionRef.current, delta);
+    }
+  }, [state.score.score]);
 
   // ── Telemetry tracking (refs — zero cost when overlay is hidden) ───────────
 
@@ -401,9 +426,13 @@ export default function SpeedGridGame({ onBack }: SpeedGridGameProps) {
   // ── Play Again ─────────────────────────────────────────────────────────────
 
   const handlePlayAgain = useCallback(() => {
-    // Re-seed PRNG so each restart produces a different board.
-    prngRef.current = makePrng(randomSeed());
-    const newState = initGame(profile, prngRef.current);
+    // [SEED LAW — Phase-8 Task-22] Capture new seed before building PRNG,
+    // mirroring the mount-time pattern. Both prngRef and newState.seed
+    // are bound to the same uint32. EngineSession is also reset with new seed.
+    prngSeedRef.current = randomSeed();
+    prngRef.current = makePrng(prngSeedRef.current);
+    const newState = initGame(profile, prngRef.current, prngSeedRef.current);
+    sessionRef.current = createSession(prngSeedRef.current, DEFAULT_PROFILE_ID);
     dispatch({ type: 'PLAY_AGAIN', newState });
   }, [profile]);
 

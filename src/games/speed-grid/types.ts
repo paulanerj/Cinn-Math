@@ -99,6 +99,14 @@ export interface SGState {
   bonusesCollected: number;
 
   /**
+   * The PRNG seed for this session.
+   * [SEED LAW — Phase-8 Task-22] seed === the exact uint32 passed to makePrng()
+   * that initialized the session PRNG. Stored in SGState so the session is
+   * serializable for replay without access to the component's prngRef.
+   */
+  seed: number;
+
+  /**
    * True for one render cycle after a wrong chain submission.
    * Drives the "Wrong!" flash feedback. Cleared by CLEAR_WRONG_FLASH.
    */

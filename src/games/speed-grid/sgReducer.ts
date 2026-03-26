@@ -59,10 +59,15 @@ export { applyBonusMaskGravity } from '../../systems/BonusMaskSystem';
  * Produces the initial SGState for a new or restarted session.
  * Not a reducer — called once at mount and once per Play Again.
  * Advances `prng` by (ROWS * COLS * 2) + target-generation calls.
+ *
+ * [SEED LAW — Phase-8 Task-22] `seed` must be the exact uint32 used to
+ * construct `prng` via makePrng(seed). It is stored in SGState so the session
+ * is serializable for replay without access to the component's prngRef.
  */
 export function initGame(
   profile: PracticeProfile,
   prng: () => number,
+  seed: number,
 ): SGState {
   const spawnedTiles = spawnBoard(ROWS, COLS, profile, prng);
   const grid = gridFromSpawn(ROWS, COLS, spawnedTiles);
@@ -82,6 +87,7 @@ export function initGame(
     score: createScoreState(),
     chainsCompleted: 0,
     bonusesCollected: 0,
+    seed,
     wrongFlash: false,
   };
 }

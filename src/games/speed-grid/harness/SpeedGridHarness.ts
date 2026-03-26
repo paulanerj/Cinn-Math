@@ -280,7 +280,7 @@ export class SGHarness {
   static create(seed: number): SGHarness {
     const profile = getProfile(DEFAULT_PROFILE_ID);
     const prng = makePrng(seed);
-    const state = initGame(profile, prng);
+    const state = initGame(profile, prng, seed);
     return new SGHarness(state, prng, profile);
   }
 
@@ -585,7 +585,7 @@ export class SGHarness {
     run('VM-21: PLAY_AGAIN resets to WAITING_TO_START', () => {
       const profile = getProfile(DEFAULT_PROFILE_ID);
       const prng2 = makePrng(7);
-      const newState = initGame(profile, prng2);
+      const newState = initGame(profile, prng2, 7);
       const h = SGHarness.create(42)
         .step({ type: 'CHAIN_START', pos: { row: 0, col: 0 } })
         .simulateTicks(65)
@@ -687,8 +687,8 @@ export class SGHarness {
       const cpA = makeCountingPrng(12345);
       const cpB = makeCountingPrng(12345);
       const profile = getProfile(DEFAULT_PROFILE_ID);
-      initGame(profile, cpA.prng);
-      initGame(profile, cpB.prng);
+      initGame(profile, cpA.prng, 12345);
+      initGame(profile, cpB.prng, 12345);
       if (cpA.tokenCount() !== cpB.tokenCount()) {
         throw new Error(
           `Token count divergence after initGame: A=${cpA.tokenCount()} B=${cpB.tokenCount()}`,
@@ -708,7 +708,7 @@ export class SGHarness {
 
       function runSession(): CycleSnapshot[] {
         const cp = makeCountingPrng(TEST_SEED);
-        let state = initGame(profile, cp.prng);
+        let state = initGame(profile, cp.prng, TEST_SEED);
         // Activate the timer: WAITING_TO_START → PLAYING.
         state = sgReducer(state, { type: 'CHAIN_START', pos: { row: 0, col: 0 } });
 
