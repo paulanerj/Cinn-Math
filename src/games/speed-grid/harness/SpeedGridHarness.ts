@@ -228,6 +228,86 @@ function countBonuses(mask: boolean[][]): number {
   return mask.reduce((sum, row) => sum + row.filter(Boolean).length, 0);
 }
 
+// ── Replay validation helpers (Task-23 — Phase-8) ────────────────────────────
+//
+// These two functions implement the record→replay verification loop:
+//
+//   recordSession(seed, N) → { finalState, log, perCycleTokenCounts }
+//     Drives N gravity cycles from `seed`, recording the action log as a
+//     minimal (seed, chains[]) pair and the per-cycle PRNG token count.
+//
+//   replaySession(log) → { finalState, perCycleTokenCounts }
+//     Rebuilds PRNG from log.seed, re-runs the exact same action sequences,
+//     resolves gravity each cycle, and returns the resulting final state.
+//
+// If both runs are deterministic, finalState and perCycleTokenCounts must be
+// identical — any token-order violation surfaces as an immediate mismatch.
+
+type ReplayChain = { positions: Array<{ row: number; col: number }> };
+type ReplayLog = { seed: number; chains: ReplayChain[] };
+
+function recordSession(
+  testSeed: number,
+  numCycles: number,
+): { finalState: SGState; log: ReplayLog; perCycleTokenCounts: number[] } {
+  const cp = makeCountingPrng(testSeed);
+  const profile = getProfile(DEFAULT_PROFILE_ID);
+  let state = initGame(profile, cp.prng, testSeed);
+  // Activate timer: WAITING_TO_START → PLAYING.
+  state = sgReducer(state, { type: 'CHAIN_START', pos: { row: 0, col: 0 } });
+
+  const chains: ReplayChain[] = [];
+  const perCycleTokenCounts: number[] = [];
+
+  for (let cycle = 0; cycle < numCycles; cycle++) {
+    if (state.phase === 'GAME_OVER') break;
+    const pair = findAdjacentPairForTarget(state.grid, state.target);
+    if (!pair) break;
+
+    state = sgReducer(state, { type: 'CHAIN_START', pos: pair[0] });
+    state = sgReducer(state, { type: 'CHAIN_EXTEND', pos: pair[1] });
+    const positions = [pair[0], pair[1]];
+    state = sgReducer(state, { type: 'CHAIN_COMMIT' });
+
+    if (state.phase !== 'CLEARING') break;
+
+    chains.push({ positions });
+    state = resolveGravitySync(state, cp.prng, profile, positions);
+    perCycleTokenCounts.push(cp.tokenCount());
+  }
+
+  return { finalState: state, log: { seed: state.seed, chains }, perCycleTokenCounts };
+}
+
+function replaySession(
+  log: ReplayLog,
+): { finalState: SGState; perCycleTokenCounts: number[] } {
+  const cp = makeCountingPrng(log.seed);
+  const profile = getProfile(DEFAULT_PROFILE_ID);
+  let state = initGame(profile, cp.prng, log.seed);
+  // Activate timer: mirrors recordSession start.
+  state = sgReducer(state, { type: 'CHAIN_START', pos: { row: 0, col: 0 } });
+
+  const perCycleTokenCounts: number[] = [];
+
+  for (const chain of log.chains) {
+    if (state.phase === 'GAME_OVER') break;
+
+    state = sgReducer(state, { type: 'CHAIN_START', pos: chain.positions[0] });
+    for (let i = 1; i < chain.positions.length; i++) {
+      state = sgReducer(state, { type: 'CHAIN_EXTEND', pos: chain.positions[i] });
+    }
+    state = sgReducer(state, { type: 'CHAIN_COMMIT' });
+
+    if (state.phase !== 'CLEARING') break;
+
+    state = resolveGravitySync(state, cp.prng, profile, chain.positions);
+    perCycleTokenCounts.push(cp.tokenCount());
+  }
+
+  return { finalState: state, perCycleTokenCounts };
+}
+
 // [Task-20 — Phase-8] Counting PRNG wrapper for replay determinism tests.
 // Wraps makePrng to track the total number of prng() calls made during a run.
 // [INVARIANT] Test-only — never imported by production code.
@@ -759,6 +839,97 @@ export class SGHarness {
           throw new Error(
             `Target divergence at cycle ${i + 1}: ` +
               `A=${snapshotsA[i].target} B=${snapshotsB[i].target}`,
+          );
+        }
+      }
+    });
+
+    // ── Category 12: Replay validation (Task-23) ──────────────────────────
+    //
+    // Proves that a serialized (seed, actionLog) pair can be deserialized and
+    // replayed to produce the exact same final board, bonusMask, and target.
+    // Also verifies per-cycle PRNG token counts match between record and replay.
+
+    run('VM-28: SGState.seed equals the value passed to SGHarness.create()', () => {
+      const h = SGHarness.create(99999);
+      h.assert(h.state.seed === 99999, `seed should be 99999, got ${h.state.seed}`);
+      // Seed is preserved across state transitions.
+      const h2 = h.step({ type: 'CHAIN_START', pos: { row: 0, col: 0 } });
+      h2.assert(h2.state.seed === 99999, 'seed must survive CHAIN_START transition');
+    });
+
+    run('VM-29: replay from (seed, actionLog) reproduces identical final state', () => {
+      const TEST_SEED = 54321;
+      const NUM_CYCLES = 8;
+
+      const { finalState, log } = recordSession(TEST_SEED, NUM_CYCLES);
+
+      if (log.chains.length === 0) {
+        throw new Error('Record produced zero chains — seed or board is degenerate');
+      }
+
+      const { finalState: replayed } = replaySession(log);
+
+      // Assert: grid identical
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (finalState.grid[r][c] !== replayed.grid[r][c]) {
+            throw new Error(
+              `Grid mismatch at [${r}][${c}]: original=${finalState.grid[r][c]} ` +
+                `replay=${replayed.grid[r][c]}`,
+            );
+          }
+        }
+      }
+
+      // Assert: bonusMask identical
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (finalState.bonusMask[r][c] !== replayed.bonusMask[r][c]) {
+            throw new Error(
+              `BonusMask mismatch at [${r}][${c}]: ` +
+                `original=${finalState.bonusMask[r][c]} replay=${replayed.bonusMask[r][c]}`,
+            );
+          }
+        }
+      }
+
+      // Assert: target identical
+      if (finalState.target !== replayed.target) {
+        throw new Error(
+          `Target mismatch: original=${finalState.target} replay=${replayed.target}`,
+        );
+      }
+
+      // Assert: chainsCompleted identical
+      if (finalState.chainsCompleted !== replayed.chainsCompleted) {
+        throw new Error(
+          `chainsCompleted mismatch: original=${finalState.chainsCompleted} ` +
+            `replay=${replayed.chainsCompleted}`,
+        );
+      }
+    });
+
+    run('VM-30: per-cycle PRNG token counts match between record and replay runs', () => {
+      const TEST_SEED = 54321;
+      const NUM_CYCLES = 8;
+
+      const { log, perCycleTokenCounts: recordCounts } = recordSession(TEST_SEED, NUM_CYCLES);
+      const { perCycleTokenCounts: replayCounts } = replaySession(log);
+
+      if (recordCounts.length === 0) {
+        throw new Error('Zero cycles recorded — seed or board is degenerate');
+      }
+      if (recordCounts.length !== replayCounts.length) {
+        throw new Error(
+          `Cycle count mismatch: record=${recordCounts.length} replay=${replayCounts.length}`,
+        );
+      }
+      for (let i = 0; i < recordCounts.length; i++) {
+        if (recordCounts[i] !== replayCounts[i]) {
+          throw new Error(
+            `Token count divergence at cycle ${i + 1}: ` +
+              `record=${recordCounts[i]} replay=${replayCounts[i]}`,
           );
         }
       }
