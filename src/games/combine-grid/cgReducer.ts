@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { PracticeProfile } from '../../engine/PracticeProfile';
-import { spawnBoard, gridFromSpawn, generateTarget, clearCells } from '../../engine/public';
+import { spawnBoard, gridFromSpawn, generateTarget } from '../../engine/public';
 import type { EvalMode } from '../../engine/public';
 import { ROWS, COLS, ROUNDS_PER_SESSION, ROUND_DURATION_SECS } from './constants';
 import type { GamePhase, GridPos } from './types';
@@ -132,10 +132,13 @@ export function reducer(state: CGState, action: Action): CGState {
         const basePoints = newSel
           .map(({ row, col }) => state.board[row][col])
           .reduce((a, b) => a + b, 0);
-        // [PIPELINE ALIGNMENT — Phase-9 Task-2]
+        // [PIPELINE ALIGNMENT — Phase-9 Task-2 / Task-3]
         // Zero cleared cells here so the board entering CLEARING already has 0s.
-        // The effect reads state.board directly as preGravBoard — no clearCells needed.
-        const clearedBoard = clearCells(state.board, newSel);
+        // Inlined from clearCells — no external helper dependency in reducer.
+        const posSet = new Set(newSel.map((p) => `${p.row},${p.col}`));
+        const clearedBoard = state.board.map((r, ri) =>
+          r.map((v, ci) => (posSet.has(`${ri},${ci}`) ? 0 : v)),
+        );
         return {
           ...state,
           phase: 'CLEARING',
