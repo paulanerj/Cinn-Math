@@ -6,11 +6,14 @@
 //        Zero React. Zero DOM. Synchronous gravity resolution.
 //
 // [PUBLIC API]
-//   CGHarness.create(seed, profile?)  → CGHarness  (new session)
+//   CGHarness.create(seed, profile?)        → CGHarness  (new session)
+//   CGHarness.runVerificationMatrix()       → void (throws on first failure)
 //
 // [INSTANCE API]
 //   .tapSequence(positions)    → new CGHarness  (dispatch TAP_TILE per position)
 //   .resolveGravity()          → new CGHarness  (synchronous orchestrator call)
+//   .advanceRound()            → new CGHarness  (synchronous ROUND_OVER effect)
+//   .resolveStalemate()        → new CGHarness  (synchronous STALEMATE effect)
 //   .getState()                → CGState
 //
 // [INVARIANT] Zero React imports. No DOM. No async. No setTimeout.
@@ -25,6 +28,8 @@
 import {
   makePrng,
   spawnTile,
+  spawnBoard,
+  gridFromSpawn,
   generateTarget,
   getProfile,
   DEFAULT_PROFILE_ID,
@@ -35,15 +40,66 @@ import { initGame, reducer } from '../cgReducer';
 import type { CGState } from '../cgReducer';
 import { ROWS, COLS } from '../constants';
 
+// ── Module-level helpers ──────────────────────────────────────────────────────
+
+/** Deep equality for number[][]. */
+function gridsEqual(a: number[][], b: number[][]): boolean {
+  if (a.length !== b.length) return false;
+  for (let r = 0; r < a.length; r++) {
+    if (a[r].length !== b[r].length) return false;
+    for (let c = 0; c < a[r].length; c++) {
+      if (a[r][c] !== b[r][c]) return false;
+    }
+  }
+  return true;
+}
+
+/** Deep equality for boolean[][]. */
+function masksEqual(a: boolean[][], b: boolean[][]): boolean {
+  if (a.length !== b.length) return false;
+  for (let r = 0; r < a.length; r++) {
+    if (a[r].length !== b[r].length) return false;
+    for (let c = 0; c < a[r].length; c++) {
+      if (a[r][c] !== b[r][c]) return false;
+    }
+  }
+  return true;
+}
+
+/** Throws a formatted VM assertion failure. */
+function assertVM(cond: boolean, vmId: string, detail: string): void {
+  if (!cond) throw new Error(`[VM-${vmId}] ${detail}`);
+}
+
+/**
+ * Finds the first pair of distinct non-zero board positions whose values
+ * sum to target. No adjacency constraint — mirrors CombineGrid's tap mechanic.
+ * Returns null if no such pair exists.
+ */
+function findMatchingPair(
+  board: number[][],
+  target: number,
+): [{ row: number; col: number }, { row: number; col: number }] | null {
+  const cells: Array<{ row: number; col: number; val: number }> = [];
+  for (let r = 0; r < board.length; r++) {
+    for (let c = 0; c < board[r].length; c++) {
+      if (board[r][c] !== 0) cells.push({ row: r, col: c, val: board[r][c] });
+    }
+  }
+  for (let i = 0; i < cells.length; i++) {
+    for (let j = i + 1; j < cells.length; j++) {
+      if (cells[i].val + cells[j].val === target) {
+        return [
+          { row: cells[i].row, col: cells[i].col },
+          { row: cells[j].row, col: cells[j].col },
+        ];
+      }
+    }
+  }
+  return null;
+}
+
 // ── resolveGravitySync ────────────────────────────────────────────────────────
-//
-// Synchronously runs one gravity cycle from a CLEARING state.
-// Mirrors the async CLEARING effect in CombineGridGame.tsx without timers.
-//
-// [PIPELINE CONTRACT]
-// - state.board is already zeroed (reducer did this in TAP_TILE)
-// - state.clearingPositions is explicit (never inferred from grid zeros)
-// - orchResult.bonusMask is always persisted via CLEAR_COMPLETE
 
 function resolveGravitySync(
   state: CGState,
@@ -56,14 +112,11 @@ function resolveGravitySync(
     if (state.clearingPositions.length === 0) {
       throw new Error(
         '[CG_HARNESS] Explicit Survivor Law violation: ' +
-          'resolveGravitySync called with empty clearingPositions. ' +
-          'TAP_TILE match branch must have set clearingPositions before CLEARING.',
+          'resolveGravitySync called with empty clearingPositions.',
       );
     }
   }
 
-  // Cache each SpawnedTile by (col, spawnIndex) so spawnValue and spawnBonus
-  // draw from the same spawnTile() call — one PRNG token per tile.
   const spawnCache: { value: number; isBonus: boolean }[][] =
     Array.from({ length: COLS }, () => []);
 
@@ -91,6 +144,40 @@ function resolveGravitySync(
   });
 }
 
+// ── advanceRoundSync ──────────────────────────────────────────────────────────
+//
+// Mirrors the ROUND_OVER effect in CombineGridGame.tsx without timers.
+// Spawns a fresh board, builds bonusMask from spawnedTiles.isBonus,
+// generates a new target, and dispatches ADVANCE_ROUND.
+
+function advanceRoundSync(
+  state: CGState,
+  prng: () => number,
+  profile: PracticeProfile,
+): CGState {
+  const spawnedTiles = spawnBoard(ROWS, COLS, profile, prng);
+  const board = gridFromSpawn(ROWS, COLS, spawnedTiles);
+  const bonusMask: boolean[][] = Array.from({ length: ROWS }, (_, r) =>
+    Array.from({ length: COLS }, (_, c) => spawnedTiles[r * COLS + c].isBonus),
+  );
+  const target = generateTarget(board, ROWS, COLS, state.mode, profile, prng);
+  return reducer(state, { type: 'ADVANCE_ROUND', board, bonusMask, target });
+}
+
+// ── resolveStalemateSync ──────────────────────────────────────────────────────
+//
+// Mirrors the STALEMATE effect in CombineGridGame.tsx without timers.
+// Generates a new target from the current board and dispatches RESOLVE_STALEMATE.
+
+function resolveStalemateSync(
+  state: CGState,
+  prng: () => number,
+  profile: PracticeProfile,
+): CGState {
+  const target = generateTarget(state.board, ROWS, COLS, state.mode, profile, prng);
+  return reducer(state, { type: 'RESOLVE_STALEMATE', target });
+}
+
 // ── CGHarness ─────────────────────────────────────────────────────────────────
 
 export class CGHarness {
@@ -108,12 +195,7 @@ export class CGHarness {
     this._profile = profile;
   }
 
-  /**
-   * Creates a new harness with a seeded PRNG and an initial game state.
-   *
-   * @param seed    - Uint32 seed passed to makePrng(). Stored in state.seed.
-   * @param profile - Practice profile (defaults to DEFAULT_PROFILE_ID).
-   */
+  /** Creates a new harness with a seeded PRNG and initial game state. */
   static create(seed: number, profile?: PracticeProfile): CGHarness {
     const p = profile ?? getProfile(DEFAULT_PROFILE_ID);
     const prng = makePrng(seed);
@@ -122,14 +204,8 @@ export class CGHarness {
   }
 
   /**
-   * Dispatches a TAP_TILE action for each position in order.
-   *
-   * Positions are expected to form a valid selection that matches the target.
-   * The reducer handles match detection — if the last position completes a
-   * match the phase transitions to CLEARING automatically.
-   *
-   * Returns a new CGHarness with the resulting state. Immutable — `this` is
-   * not modified.
+   * Dispatches TAP_TILE for each position in order through the reducer.
+   * If the last position completes a match, phase transitions to CLEARING.
    */
   tapSequence(positions: ReadonlyArray<{ row: number; col: number }>): CGHarness {
     let state = this._state;
@@ -140,14 +216,7 @@ export class CGHarness {
   }
 
   /**
-   * Synchronously resolves one gravity cycle when the harness is in CLEARING.
-   *
-   * Calls runGravityOrchestrator with:
-   *   - state.board (already zeroed by reducer)
-   *   - state.bonusMask (already cleared by reducer)
-   *   - state.clearingPositions (explicit — never inferred)
-   *
-   * Dispatches CLEAR_COMPLETE and returns a new harness with applied result.
+   * Synchronously resolves one gravity cycle (mirrors CLEARING effect).
    * No-op if not in CLEARING phase.
    */
   resolveGravity(): CGHarness {
@@ -155,8 +224,183 @@ export class CGHarness {
     return new CGHarness(nextState, this._prng, this._profile);
   }
 
+  /**
+   * Synchronously spawns a fresh board for the next round (mirrors ROUND_OVER effect).
+   * Consumes PRNG tokens identically to the component effect.
+   */
+  advanceRound(): CGHarness {
+    const nextState = advanceRoundSync(this._state, this._prng, this._profile);
+    return new CGHarness(nextState, this._prng, this._profile);
+  }
+
+  /**
+   * Synchronously generates a new target from the current board (mirrors STALEMATE effect).
+   * Consumes one generateTarget PRNG sequence identically to the component effect.
+   */
+  resolveStalemate(): CGHarness {
+    const nextState = resolveStalemateSync(this._state, this._prng, this._profile);
+    return new CGHarness(nextState, this._prng, this._profile);
+  }
+
   /** Returns the current CGState. */
   getState(): CGState {
     return this._state;
+  }
+
+  // ── Verification Matrix ────────────────────────────────────────────────────
+
+  /**
+   * Runs VM-CG-1 through VM-CG-7.
+   * Throws on the first failure with a message of the form:
+   *   [VM-CG-N] <description of what failed>
+   *
+   * All VMs use deterministic seeds — no randomness.
+   */
+  static runVerificationMatrix(): void {
+    const SEED_A = 99_999;
+    const SEED_B = 12_345;
+
+    // ── VM-CG-1: same seed → identical initial board, bonusMask, target ──────
+
+    {
+      const a = CGHarness.create(SEED_A).getState();
+      const b = CGHarness.create(SEED_A).getState();
+
+      assertVM(gridsEqual(a.board, b.board), 'CG-1', 'initial board differs for same seed');
+      assertVM(masksEqual(a.bonusMask, b.bonusMask), 'CG-1', 'initial bonusMask differs for same seed');
+      assertVM(a.target === b.target, 'CG-1', `initial target differs: ${a.target} vs ${b.target}`);
+      assertVM(a.seed === SEED_A, 'CG-1', `state.seed not stored: expected ${SEED_A}, got ${a.seed}`);
+
+      // Different seeds must not collide.
+      const c = CGHarness.create(SEED_B).getState();
+      assertVM(!gridsEqual(a.board, c.board), 'CG-1', 'different seeds produced identical boards (collision)');
+    }
+
+    // ── VM-CG-2: same tapSequence on same seed → identical pre-gravity state ─
+
+    {
+      const stateA = CGHarness.create(SEED_A).getState();
+      const pair = findMatchingPair(stateA.board, stateA.target);
+      assertVM(pair !== null, 'CG-2', 'no matching pair found on initial board — generateTarget guarantee violated');
+
+      const positions = pair!;
+
+      const afterA = CGHarness.create(SEED_A).tapSequence(positions).getState();
+      const afterB = CGHarness.create(SEED_A).tapSequence(positions).getState();
+
+      assertVM(afterA.phase === 'CLEARING', 'CG-2', `expected CLEARING after valid tapSequence, got ${afterA.phase}`);
+      assertVM(gridsEqual(afterA.board, afterB.board), 'CG-2', 'board differs after same tapSequence on same seed');
+      assertVM(masksEqual(afterA.bonusMask, afterB.bonusMask), 'CG-2', 'bonusMask differs after same tapSequence on same seed');
+      assertVM(afterA.target === afterB.target, 'CG-2', `target differs: ${afterA.target} vs ${afterB.target}`);
+    }
+
+    // ── VM-CG-3: tapSequence + resolveGravity → identical post-gravity state ─
+
+    {
+      const stateA = CGHarness.create(SEED_A).getState();
+      const pair = findMatchingPair(stateA.board, stateA.target)!;
+
+      const afterA = CGHarness.create(SEED_A).tapSequence(pair).resolveGravity().getState();
+      const afterB = CGHarness.create(SEED_A).tapSequence(pair).resolveGravity().getState();
+
+      assertVM(gridsEqual(afterA.board, afterB.board), 'CG-3', 'post-gravity board differs for same seed');
+      assertVM(masksEqual(afterA.bonusMask, afterB.bonusMask), 'CG-3', 'post-gravity bonusMask differs for same seed');
+      assertVM(afterA.target === afterB.target, 'CG-3', `post-gravity target differs: ${afterA.target} vs ${afterB.target}`);
+    }
+
+    // ── VM-CG-4: bonusMask dimensions always equal board dimensions ───────────
+
+    {
+      // Check at init.
+      const s0 = CGHarness.create(SEED_A).getState();
+      assertVM(s0.board.length === ROWS, 'CG-4', `board rows at init: expected ${ROWS}, got ${s0.board.length}`);
+      assertVM(s0.bonusMask.length === ROWS, 'CG-4', `bonusMask rows at init: expected ${ROWS}, got ${s0.bonusMask.length}`);
+      for (let r = 0; r < ROWS; r++) {
+        assertVM(s0.board[r].length === COLS, 'CG-4', `board[${r}].length at init: expected ${COLS}, got ${s0.board[r].length}`);
+        assertVM(s0.bonusMask[r].length === COLS, 'CG-4', `bonusMask[${r}].length at init: expected ${COLS}, got ${s0.bonusMask[r].length}`);
+      }
+
+      // Check after tap (CLEARING state).
+      const pair = findMatchingPair(s0.board, s0.target)!;
+      const s1 = CGHarness.create(SEED_A).tapSequence(pair).getState();
+      assertVM(s1.board.length === ROWS, 'CG-4', `board rows in CLEARING: expected ${ROWS}, got ${s1.board.length}`);
+      assertVM(s1.bonusMask.length === ROWS, 'CG-4', `bonusMask rows in CLEARING: expected ${ROWS}, got ${s1.bonusMask.length}`);
+      for (let r = 0; r < ROWS; r++) {
+        assertVM(s1.board[r].length === COLS, 'CG-4', `board[${r}].length in CLEARING: expected ${COLS}`);
+        assertVM(s1.bonusMask[r].length === COLS, 'CG-4', `bonusMask[${r}].length in CLEARING: expected ${COLS}`);
+      }
+
+      // Check after gravity (post-CLEAR_COMPLETE).
+      const s2 = CGHarness.create(SEED_A).tapSequence(pair).resolveGravity().getState();
+      assertVM(s2.board.length === ROWS, 'CG-4', `board rows post-gravity: expected ${ROWS}, got ${s2.board.length}`);
+      assertVM(s2.bonusMask.length === ROWS, 'CG-4', `bonusMask rows post-gravity: expected ${ROWS}, got ${s2.bonusMask.length}`);
+      for (let r = 0; r < ROWS; r++) {
+        assertVM(s2.board[r].length === COLS, 'CG-4', `board[${r}].length post-gravity: expected ${COLS}`);
+        assertVM(s2.bonusMask[r].length === COLS, 'CG-4', `bonusMask[${r}].length post-gravity: expected ${COLS}`);
+      }
+    }
+
+    // ── VM-CG-5: board[r][c] === 0 in CLEARING → bonusMask[r][c] === false ───
+
+    {
+      const s0 = CGHarness.create(SEED_A).getState();
+      const pair = findMatchingPair(s0.board, s0.target)!;
+      const s1 = CGHarness.create(SEED_A).tapSequence(pair).getState();
+
+      assertVM(s1.phase === 'CLEARING', 'CG-5', `expected CLEARING phase, got ${s1.phase}`);
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (s1.board[r][c] === 0) {
+            assertVM(
+              s1.bonusMask[r][c] === false,
+              'CG-5',
+              `board[${r}][${c}] === 0 but bonusMask[${r}][${c}] === true — mask not cleared`,
+            );
+          }
+        }
+      }
+    }
+
+    // ── VM-CG-6: ROUND_OVER regeneration is deterministic for same sequence ───
+
+    {
+      // Drive both harnesses through tap + gravity to advance PRNG to same position,
+      // then call advanceRound() on both. Results must be identical.
+      const s0 = CGHarness.create(SEED_A).getState();
+      const pair = findMatchingPair(s0.board, s0.target)!;
+
+      const postGravA = CGHarness.create(SEED_A).tapSequence(pair).resolveGravity();
+      const postGravB = CGHarness.create(SEED_A).tapSequence(pair).resolveGravity();
+
+      const afterA = postGravA.advanceRound().getState();
+      const afterB = postGravB.advanceRound().getState();
+
+      assertVM(gridsEqual(afterA.board, afterB.board), 'CG-6', 'ADVANCE_ROUND board differs for same seed + same prior sequence');
+      assertVM(masksEqual(afterA.bonusMask, afterB.bonusMask), 'CG-6', 'ADVANCE_ROUND bonusMask differs for same seed + same prior sequence');
+      assertVM(afterA.target === afterB.target, 'CG-6', `ADVANCE_ROUND target differs: ${afterA.target} vs ${afterB.target}`);
+      assertVM(afterA.phase === 'SELECTING', 'CG-6', `expected SELECTING after ADVANCE_ROUND, got ${afterA.phase}`);
+    }
+
+    // ── VM-CG-7: STALEMATE target regeneration is deterministic ──────────────
+    //
+    // Two harnesses driven to same state (same PRNG position via identical
+    // tap + gravity). resolveStalemate() consumes one generateTarget sequence
+    // from each. Results must be identical.
+
+    {
+      const s0 = CGHarness.create(SEED_A).getState();
+      const pair = findMatchingPair(s0.board, s0.target)!;
+
+      const postGravA = CGHarness.create(SEED_A).tapSequence(pair).resolveGravity();
+      const postGravB = CGHarness.create(SEED_A).tapSequence(pair).resolveGravity();
+
+      const afterA = postGravA.resolveStalemate().getState();
+      const afterB = postGravB.resolveStalemate().getState();
+
+      assertVM(afterA.target === afterB.target, 'CG-7', `STALEMATE target differs: ${afterA.target} vs ${afterB.target}`);
+      // Board and bonusMask must be unchanged by stalemate resolution.
+      assertVM(gridsEqual(afterA.board, afterB.board), 'CG-7', 'board changed during STALEMATE resolution');
+      assertVM(masksEqual(afterA.bonusMask, afterB.bonusMask), 'CG-7', 'bonusMask changed during STALEMATE resolution');
+    }
   }
 }
