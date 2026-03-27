@@ -178,6 +178,69 @@ function resolveStalemateSync(
   return reducer(state, { type: 'RESOLVE_STALEMATE', target });
 }
 
+// ── Replay types ─────────────────────────────────────────────────────────────
+
+/** The tap positions dispatched in one clear cycle. */
+type ReplayStep = {
+  positions: ReadonlyArray<{ row: number; col: number }>;
+};
+
+/** The complete log produced by recordSession. */
+export type CGReplayLog = {
+  seed: number;
+  steps: ReplayStep[];
+};
+
+/** The result returned by recordSession. */
+export type CGRecordResult = {
+  log: CGReplayLog;
+  finalState: CGState;
+};
+
+// ── recordSession ─────────────────────────────────────────────────────────────
+//
+// Drives a harness for `steps` tap+gravity cycles, recording each position
+// sequence. Uses findMatchingPair to locate a valid pair at each cycle.
+// Throws if no valid pair is found (would indicate a generateTarget violation).
+
+function recordSession(
+  seed: number,
+  steps: number,
+  profile: PracticeProfile,
+): CGRecordResult {
+  let harness = CGHarness.create(seed, profile);
+  const log: CGReplayLog = { seed, steps: [] };
+
+  for (let i = 0; i < steps; i++) {
+    const state = harness.getState();
+    const pair = findMatchingPair(state.board, state.target);
+    if (pair === null) {
+      throw new Error(
+        `[CG_REPLAY] recordSession step ${i}: no matching pair found — ` +
+          `target=${state.target}. generateTarget guarantee violated.`,
+      );
+    }
+    log.steps.push({ positions: pair });
+    harness = harness.tapSequence(pair).resolveGravity();
+  }
+
+  return { log, finalState: harness.getState() };
+}
+
+// ── replaySession ─────────────────────────────────────────────────────────────
+//
+// Reconstructs the PRNG from log.seed, replays each logged tap sequence and
+// resolveGravity in order. Returns the replayed final state.
+// No inference — position sequences are taken directly from the log.
+
+function replaySession(log: CGReplayLog, profile: PracticeProfile): CGState {
+  let harness = CGHarness.create(log.seed, profile);
+  for (const step of log.steps) {
+    harness = harness.tapSequence(step.positions).resolveGravity();
+  }
+  return harness.getState();
+}
+
 // ── CGHarness ─────────────────────────────────────────────────────────────────
 
 export class CGHarness {
@@ -245,6 +308,23 @@ export class CGHarness {
   /** Returns the current CGState. */
   getState(): CGState {
     return this._state;
+  }
+
+  /**
+   * Records N tap+gravity cycles from the given seed.
+   * Returns the action log and the final state after all cycles.
+   */
+  static recordSession(seed: number, steps: number, profile?: PracticeProfile): CGRecordResult {
+    return recordSession(seed, steps, profile ?? getProfile(DEFAULT_PROFILE_ID));
+  }
+
+  /**
+   * Replays a log produced by recordSession.
+   * Reconstructs PRNG from log.seed; re-runs every tap sequence and resolveGravity.
+   * Returns the replayed final state.
+   */
+  static replaySession(log: CGReplayLog, profile?: PracticeProfile): CGState {
+    return replaySession(log, profile ?? getProfile(DEFAULT_PROFILE_ID));
   }
 
   // ── Verification Matrix ────────────────────────────────────────────────────
@@ -401,6 +481,47 @@ export class CGHarness {
       // Board and bonusMask must be unchanged by stalemate resolution.
       assertVM(gridsEqual(afterA.board, afterB.board), 'CG-7', 'board changed during STALEMATE resolution');
       assertVM(masksEqual(afterA.bonusMask, afterB.bonusMask), 'CG-7', 'bonusMask changed during STALEMATE resolution');
+    }
+
+    // ── VM-CG-8: replay produces identical final state ────────────────────────
+    //
+    // recordSession drives 5 cycles and logs each tap sequence.
+    // replaySession reconstructs PRNG from seed and re-runs those sequences.
+    // Final board, bonusMask, target, and phase must match exactly.
+    // Coordinate-level detail provided for any mismatch.
+
+    {
+      const REPLAY_STEPS = 5;
+      const profile = getProfile(DEFAULT_PROFILE_ID);
+      const { log, finalState: recorded } = recordSession(SEED_A, REPLAY_STEPS, profile);
+      const replayed = replaySession(log, profile);
+
+      assertVM(
+        recorded.phase === replayed.phase,
+        'CG-8',
+        `phase mismatch: recorded=${recorded.phase} replayed=${replayed.phase}`,
+      );
+
+      assertVM(
+        recorded.target === replayed.target,
+        'CG-8',
+        `target mismatch: recorded=${recorded.target} replayed=${replayed.target}`,
+      );
+
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          assertVM(
+            recorded.board[r][c] === replayed.board[r][c],
+            'CG-8',
+            `board mismatch at [${r}][${c}]: recorded=${recorded.board[r][c]} replayed=${replayed.board[r][c]}`,
+          );
+          assertVM(
+            recorded.bonusMask[r][c] === replayed.bonusMask[r][c],
+            'CG-8',
+            `bonusMask mismatch at [${r}][${c}]: recorded=${recorded.bonusMask[r][c]} replayed=${replayed.bonusMask[r][c]}`,
+          );
+        }
+      }
     }
   }
 }
