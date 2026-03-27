@@ -92,22 +92,13 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     const spawnCache: { value: number; isBonus: boolean }[][] =
       Array.from({ length: COLS }, () => []);
 
-    // [GRAVITY ORCHESTRATOR — Phase-8 Task-19]
-    // CombineGrid has no bonusMask yet; pass an all-false shim so the
-    // orchestrator's applyBonusMaskGravity step is a pure no-op.
-    // orchResult.bonusMask is computed but intentionally not consumed —
-    // CLEAR_COMPLETE carries only board + target (unchanged contract).
-    // PRNG token order is identical to the previous direct applyGravity call:
-    //   Step 1 (applyGravity)       — same spawnValue/spawnBonus callbacks
-    //   Step 2 (applyBonusMaskGravity) — zero PRNG tokens
-    //   Step 3 (generateNextTarget) — same generateTarget call
-    const emptyBonusMask: boolean[][] = Array.from({ length: ROWS }, () =>
-      Array(COLS).fill(false),
-    );
-
+    // [GRAVITY ORCHESTRATOR — Phase-9 Task-5]
+    // bonusMask is now real state (no more all-false shim).
+    // Reducer already zeroed cleared positions in bonusMask before CLEARING.
+    // orchResult.bonusMask carries the post-gravity evolved mask back to state.
     const orchResult = runGravityOrchestrator({
       grid: preGravBoard,
-      bonusMask: emptyBonusMask,
+      bonusMask: state.bonusMask,
       clearedPositions: clearing,
       rows: ROWS,
       cols: COLS,
@@ -123,7 +114,12 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
 
     const id = setTimeout(() => {
       if (!isMounted.current) return;
-      dispatch({ type: 'CLEAR_COMPLETE', board: orchResult.grid, target: orchResult.target });
+      dispatch({
+        type: 'CLEAR_COMPLETE',
+        board: orchResult.grid,
+        bonusMask: orchResult.bonusMask,
+        target: orchResult.target,
+      });
     }, CLEAR_MS);
 
     return () => clearTimeout(id);
@@ -138,8 +134,11 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
       if (!isMounted.current) return;
       const spawnedTiles = spawnBoard(ROWS, COLS, profile, prngRef.current);
       const board = gridFromSpawn(ROWS, COLS, spawnedTiles);
+      const bonusMask: boolean[][] = Array.from({ length: ROWS }, (_, r) =>
+        Array.from({ length: COLS }, (_, c) => spawnedTiles[r * COLS + c].isBonus),
+      );
       const target = generateTarget(board, ROWS, COLS, 'sum', profile, prngRef.current);
-      dispatch({ type: 'ADVANCE_ROUND', board, target });
+      dispatch({ type: 'ADVANCE_ROUND', board, bonusMask, target });
     }, ROUND_OVER_AUTOADVANCE_MS);
     return () => clearTimeout(id);
   }, [state.phase, state.roundsCompleted]); // eslint-disable-line react-hooks/exhaustive-deps

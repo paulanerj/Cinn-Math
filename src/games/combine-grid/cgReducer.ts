@@ -30,6 +30,8 @@ export interface CGState {
   mode: EvalMode;
   /** Board as a plain number[][]. 0 = empty cell (during gravity transition). */
   board: number[][];
+  /** Bonus tile mask — true where a tile is a bonus tile. Structurally aligned with board. */
+  bonusMask: boolean[][];
   /** PRNG seed captured at session start — stored for replay readiness. */
   seed: number;
   selection: GridPos[];
@@ -48,8 +50,8 @@ export interface CGState {
 export type Action =
   | { type: 'TICK' }
   | { type: 'TAP_TILE'; pos: GridPos }
-  | { type: 'CLEAR_COMPLETE'; board: number[][]; target: number }
-  | { type: 'ADVANCE_ROUND'; board: number[][]; target: number }
+  | { type: 'CLEAR_COMPLETE'; board: number[][]; bonusMask: boolean[][]; target: number }
+  | { type: 'ADVANCE_ROUND'; board: number[][]; bonusMask: boolean[][]; target: number }
   | { type: 'RESOLVE_STALEMATE'; target: number }
   | { type: 'PLAY_AGAIN'; newState: CGState };
 
@@ -74,11 +76,15 @@ export function initGame(
 ): CGState {
   const spawnedTiles = spawnBoard(ROWS, COLS, profile, prng);
   const board = gridFromSpawn(ROWS, COLS, spawnedTiles);
+  const bonusMask: boolean[][] = Array.from({ length: ROWS }, (_, r) =>
+    Array.from({ length: COLS }, (_, c) => spawnedTiles[r * COLS + c].isBonus),
+  );
   const target = generateTarget(board, ROWS, COLS, 'sum', profile, prng);
   return {
     phase: 'SELECTING',
     mode: 'sum',
     board,
+    bonusMask,
     seed,
     selection: [],
     target,
@@ -132,17 +138,21 @@ export function reducer(state: CGState, action: Action): CGState {
         const basePoints = newSel
           .map(({ row, col }) => state.board[row][col])
           .reduce((a, b) => a + b, 0);
-        // [PIPELINE ALIGNMENT — Phase-9 Task-2 / Task-3]
-        // Zero cleared cells here so the board entering CLEARING already has 0s.
-        // Inlined from clearCells — no external helper dependency in reducer.
+        // [PIPELINE ALIGNMENT — Phase-9 Task-2 / Task-3 / Task-5]
+        // Zero cleared cells in board and bonusMask here so both enter CLEARING
+        // already aligned. posSet shared across both maps — same positions, one pass.
         const posSet = new Set(newSel.map((p) => `${p.row},${p.col}`));
         const clearedBoard = state.board.map((r, ri) =>
           r.map((v, ci) => (posSet.has(`${ri},${ci}`) ? 0 : v)),
+        );
+        const clearedMask = state.bonusMask.map((r, ri) =>
+          r.map((v, ci) => (posSet.has(`${ri},${ci}`) ? false : v)),
         );
         return {
           ...state,
           phase: 'CLEARING',
           board: clearedBoard,
+          bonusMask: clearedMask,
           selection: [],
           selectionVal: 0,
           clearingPositions: newSel,
@@ -165,6 +175,7 @@ export function reducer(state: CGState, action: Action): CGState {
         ...state,
         phase: nextPhase,
         board: action.board,
+        bonusMask: action.bonusMask,
         target: action.target,
         clearingPositions: [],
         selection: [],
@@ -180,6 +191,7 @@ export function reducer(state: CGState, action: Action): CGState {
         ...state,
         phase: 'SELECTING',
         board: action.board,
+        bonusMask: action.bonusMask,
         target: action.target,
         selection: [],
         selectionVal: 0,
