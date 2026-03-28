@@ -180,9 +180,26 @@ function resolveStalemateSync(
 
 // ── Replay types ─────────────────────────────────────────────────────────────
 
-/** The tap positions dispatched in one clear cycle. */
+/** Post-gravity state captured at the end of one clear cycle. */
+type CycleSnapshot = {
+  /** Board after gravity + spawn has fully settled. */
+  postGravityBoard: number[][];
+  /** BonusMask after gravity evolution. */
+  postGravityBonusMask: boolean[][];
+  /** Target generated from the settled board. */
+  target: number;
+  /**
+   * The zeroed positions on the pre-gravity board — derived by recording which
+   * cells were 0 after the reducer's TAP_TILE clearing but before resolveGravity.
+   * Used in replay to verify cleared cells match exactly (Section D).
+   */
+  preGravityZeroPositions: ReadonlyArray<{ row: number; col: number }>;
+};
+
+/** The tap positions and recorded outcome for one clear cycle. */
 type ReplayStep = {
   positions: ReadonlyArray<{ row: number; col: number }>;
+  snapshot: CycleSnapshot;
 };
 
 /** The complete log produced by recordSession. */
@@ -199,9 +216,9 @@ export type CGRecordResult = {
 
 // ── recordSession ─────────────────────────────────────────────────────────────
 //
-// Drives a harness for `steps` tap+gravity cycles, recording each position
-// sequence. Uses findMatchingPair to locate a valid pair at each cycle.
-// Throws if no valid pair is found (would indicate a generateTarget violation).
+// Drives a harness for `steps` tap+gravity cycles. After each tap (pre-gravity),
+// captures which cells are 0 (the cleared positions). After resolveGravity,
+// captures the full post-gravity snapshot. Both are stored in the step log.
 
 function recordSession(
   seed: number,
@@ -220,8 +237,37 @@ function recordSession(
           `target=${state.target}. generateTarget guarantee violated.`,
       );
     }
-    log.steps.push({ positions: pair });
-    harness = harness.tapSequence(pair).resolveGravity();
+
+    // Advance to CLEARING — reducer zeros cleared cells in board + bonusMask.
+    const afterTap = harness.tapSequence(pair);
+    const clearingState = afterTap.getState();
+
+    // Derive pre-gravity zero positions from the post-tap board.
+    // These are the cells that the reducer zeroed at TAP_TILE time.
+    const preGravityZeroPositions: Array<{ row: number; col: number }> = [];
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (clearingState.board[r][c] === 0) {
+          preGravityZeroPositions.push({ row: r, col: c });
+        }
+      }
+    }
+
+    // Resolve gravity and capture the settled state.
+    const afterGravity = afterTap.resolveGravity();
+    const settledState = afterGravity.getState();
+
+    log.steps.push({
+      positions: pair,
+      snapshot: {
+        postGravityBoard: settledState.board.map((row) => [...row]),
+        postGravityBonusMask: settledState.bonusMask.map((row) => [...row]),
+        target: settledState.target,
+        preGravityZeroPositions,
+      },
+    });
+
+    harness = afterGravity;
   }
 
   return { log, finalState: harness.getState() };
@@ -229,15 +275,74 @@ function recordSession(
 
 // ── replaySession ─────────────────────────────────────────────────────────────
 //
-// Reconstructs the PRNG from log.seed, replays each logged tap sequence and
-// resolveGravity in order. Returns the replayed final state.
-// No inference — position sequences are taken directly from the log.
+// Reconstructs the PRNG from log.seed and replays each step.
+// At each cycle:
+//   1. Re-runs tap sequence through reducer.
+//   2. Verifies pre-gravity zero positions match the recorded snapshot (Section D).
+//   3. Resolves gravity.
+//   4. Compares post-gravity board, bonusMask, and target against snapshot.
+// Throws on first mismatch with coordinate-level detail.
 
 function replaySession(log: CGReplayLog, profile: PracticeProfile): CGState {
   let harness = CGHarness.create(log.seed, profile);
-  for (const step of log.steps) {
-    harness = harness.tapSequence(step.positions).resolveGravity();
+
+  for (let i = 0; i < log.steps.length; i++) {
+    const step = log.steps[i];
+    const snap = step.snapshot;
+
+    // Re-run taps — reducer clears board + bonusMask.
+    const afterTap = harness.tapSequence(step.positions);
+    const clearingState = afterTap.getState();
+
+    // Section D: verify zeroed cells match the recorded pre-gravity zero positions.
+    // Build a set from the recorded zeros for O(1) lookup.
+    const recordedZeroSet = new Set(
+      snap.preGravityZeroPositions.map((p) => `${p.row},${p.col}`),
+    );
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const isZeroNow = clearingState.board[r][c] === 0;
+        const wasZeroRecorded = recordedZeroSet.has(`${r},${c}`);
+        if (isZeroNow !== wasZeroRecorded) {
+          throw new Error(
+            `[VM-CG-9] step ${i} pre-gravity zero mismatch at [${r}][${c}]: ` +
+              `replay=${isZeroNow} recorded=${wasZeroRecorded}`,
+          );
+        }
+      }
+    }
+
+    // Resolve gravity and compare per-cycle snapshot.
+    const afterGravity = afterTap.resolveGravity();
+    const settledState = afterGravity.getState();
+
+    if (settledState.target !== snap.target) {
+      throw new Error(
+        `[VM-CG-9] step ${i} target mismatch: ` +
+          `replay=${settledState.target} recorded=${snap.target}`,
+      );
+    }
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (settledState.board[r][c] !== snap.postGravityBoard[r][c]) {
+          throw new Error(
+            `[VM-CG-9] step ${i} board mismatch at [${r}][${c}]: ` +
+              `replay=${settledState.board[r][c]} recorded=${snap.postGravityBoard[r][c]}`,
+          );
+        }
+        if (settledState.bonusMask[r][c] !== snap.postGravityBonusMask[r][c]) {
+          throw new Error(
+            `[VM-CG-9] step ${i} bonusMask mismatch at [${r}][${c}]: ` +
+              `replay=${settledState.bonusMask[r][c]} recorded=${snap.postGravityBonusMask[r][c]}`,
+          );
+        }
+      }
+    }
+
+    harness = afterGravity;
   }
+
   return harness.getState();
 }
 
@@ -521,6 +626,48 @@ export class CGHarness {
             `bonusMask mismatch at [${r}][${c}]: recorded=${recorded.bonusMask[r][c]} replayed=${replayed.bonusMask[r][c]}`,
           );
         }
+      }
+    }
+
+    // ── VM-CG-9: per-cycle snapshot validation ────────────────────────────────
+    //
+    // replaySession now validates at every cycle, not just final state.
+    // Verifies pre-gravity zero positions, post-gravity board, bonusMask,
+    // and target at each step. Any mismatch throws with step + coordinate detail.
+    // A passing run proves that each cycle — not just the end state — is
+    // deterministically reproduced from (seed, action log).
+
+    {
+      const REPLAY_STEPS = 5;
+      const profile = getProfile(DEFAULT_PROFILE_ID);
+      // recordSession builds the log with per-cycle snapshots.
+      const { log } = recordSession(SEED_A, REPLAY_STEPS, profile);
+      // replaySession validates per-cycle — throws on first mismatch.
+      // If it returns without throwing, all cycles matched.
+      replaySession(log, profile);
+      // Verify the log contains snapshots for every step.
+      assertVM(
+        log.steps.length === REPLAY_STEPS,
+        'CG-9',
+        `log.steps.length=${log.steps.length}, expected ${REPLAY_STEPS}`,
+      );
+      for (let i = 0; i < log.steps.length; i++) {
+        const snap = log.steps[i].snapshot;
+        assertVM(
+          snap.postGravityBoard.length === ROWS,
+          'CG-9',
+          `step ${i} snapshot board rows: expected ${ROWS}, got ${snap.postGravityBoard.length}`,
+        );
+        assertVM(
+          snap.postGravityBonusMask.length === ROWS,
+          'CG-9',
+          `step ${i} snapshot bonusMask rows: expected ${ROWS}, got ${snap.postGravityBonusMask.length}`,
+        );
+        assertVM(
+          snap.preGravityZeroPositions.length >= 2,
+          'CG-9',
+          `step ${i} preGravityZeroPositions has fewer than 2 entries — tap pair must zero at least 2 cells`,
+        );
       }
     }
   }
