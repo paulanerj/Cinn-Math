@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import Board from './components/Board';
 import ResultScreen from './components/ResultScreen';
 import {
@@ -51,6 +51,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     () => initGame(profile, prngRef.current, prngSeedRef.current),
   );
   const [tileSize, setTileSize] = useState(computeTileSize);
+  const [hoverPos, setHoverPos] = useState<GridPos | null>(null);
   const isMounted = useRef(true);
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -130,6 +131,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
 
   useEffect(() => {
     if (state.phase !== 'ROUND_OVER') return;
+    const currentMode = state.mode;
     const id = setTimeout(() => {
       if (!isMounted.current) return;
       const spawnedTiles = spawnBoard(ROWS, COLS, profile, prngRef.current);
@@ -137,7 +139,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
       const bonusMask: boolean[][] = Array.from({ length: ROWS }, (_, r) =>
         Array.from({ length: COLS }, (_, c) => spawnedTiles[r * COLS + c].isBonus),
       );
-      const target = generateTarget(board, ROWS, COLS, 'sum', profile, prngRef.current);
+      const target = generateTarget(board, ROWS, COLS, currentMode, profile, prngRef.current);
       dispatch({ type: 'ADVANCE_ROUND', board, bonusMask, target });
     }, ROUND_OVER_AUTOADVANCE_MS);
     return () => clearTimeout(id);
@@ -215,6 +217,48 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
   const timerColor =
     state.timeLeft <= 5 ? '#ef4444' : state.timeLeft <= 10 ? '#f97316' : '#22c55e';
 
+  // ── Drag interaction handlers ────────────────────────────────────────────────
+  // First tap on a tile: DRAG_START (sets dragSource, highlights tile blue).
+  // Second tap on any tile: DRAG_DROP (reducer validates adjacency and evaluates).
+  // Reducer returns { dragSource: null } on invalid drop — visually snaps back.
+  const handleTilePress = useCallback((pos: GridPos) => {
+    if (state.phase !== 'SELECTING') return;
+    if (state.dragSource === null) {
+      dispatch({ type: 'DRAG_START', pos });
+    } else {
+      dispatch({ type: 'DRAG_DROP', src: state.dragSource, dst: pos });
+      setHoverPos(null);
+    }
+  }, [state.phase, state.dragSource]);
+
+  const handleTileHover = useCallback((pos: GridPos) => {
+    if (state.dragSource !== null) setHoverPos(pos);
+  }, [state.dragSource]);
+
+  // Compute drop target: hoverPos that is adjacent (Chebyshev = 1) to dragSource.
+  const dropTarget: GridPos | null = (() => {
+    if (state.dragSource === null || hoverPos === null) return null;
+    const adjacent =
+      Math.max(
+        Math.abs(hoverPos.row - state.dragSource.row),
+        Math.abs(hoverPos.col - state.dragSource.col),
+      ) === 1;
+    return adjacent ? hoverPos : null;
+  })();
+
+  // Equation preview (pure UI — reducer never produces strings).
+  const eqPreview = (() => {
+    if (state.dragSource === null) return null;
+    const srcVal = state.board[state.dragSource.row][state.dragSource.col];
+    if (dropTarget === null) return { label: `${srcVal} ×  ?`, color: '#888' };
+    const dstVal = state.board[dropTarget.row][dropTarget.col];
+    if (dstVal === 0) return { label: `${srcVal} ×  ?`, color: '#888' };
+    const result = srcVal * dstVal;
+    const color =
+      result === state.target ? '#22c55e' : result > state.target ? '#ef4444' : '#aaa';
+    return { label: `${srcVal} × ${dstVal} = ${result}`, color };
+  })();
+
   return (
     <div
       style={{
@@ -226,6 +270,12 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
         alignItems: 'center',
         fontFamily: 'Nunito, sans-serif',
         overflow: 'hidden',
+      }}
+      onMouseLeave={() => {
+        if (state.dragSource !== null) {
+          dispatch({ type: 'DRAG_CANCEL' });
+          setHoverPos(null);
+        }
       }}
     >
       {/* ── HUD top ─────────────────────────────────────────────────────────── */}
@@ -244,7 +294,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
         <Stat label="ROUND" value={`${state.roundsCompleted + 1}/${ROUNDS_PER_SESSION}`} />
         <div style={{ textAlign: 'center' }}>
           <div style={{ color: '#888', fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
-            TARGET +
+            TARGET ×
           </div>
           <div
             style={{
@@ -268,7 +318,10 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
           tileSize={tileSize}
           selection={state.selection}
           clearingPositions={state.clearingPositions}
-          onTilePress={(pos: GridPos) => dispatch({ type: 'TAP_TILE', pos })}
+          dragSource={state.dragSource}
+          dropTarget={dropTarget}
+          onTilePress={handleTilePress}
+          onTileHover={handleTileHover}
         />
       </div>
 
@@ -286,15 +339,12 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
           flexShrink: 0,
         }}
       >
-        {/* Selection value readout */}
-        <div style={{ fontSize: 13, fontWeight: 700 }}>
-          {state.selectionVal > 0 ? (
-            <span>
-              <span style={{ color: '#fff', fontSize: 16 }}>{state.selectionVal}</span>
-              <span style={{ color: '#555', fontSize: 12 }}> / {state.target}</span>
-            </span>
+        {/* Equation preview (Section E — pure UI, no reducer strings) */}
+        <div style={{ fontSize: 13, fontWeight: 700, minHeight: 20 }}>
+          {eqPreview !== null ? (
+            <span style={{ color: eqPreview.color, fontSize: 16 }}>{eqPreview.label}</span>
           ) : (
-            <span style={{ color: '#444' }}>Select tiles</span>
+            <span style={{ color: '#444' }}>Tap a tile to start a merge</span>
           )}
         </div>
 

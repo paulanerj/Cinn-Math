@@ -88,7 +88,7 @@ function findMatchingPair(
   }
   for (let i = 0; i < cells.length; i++) {
     for (let j = i + 1; j < cells.length; j++) {
-      if (cells[i].val + cells[j].val === target) {
+      if (cells[i].val * cells[j].val === target) {
         return [
           { row: cells[i].row, col: cells[i].col },
           { row: cells[j].row, col: cells[j].col },

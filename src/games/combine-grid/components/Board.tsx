@@ -9,7 +9,10 @@ interface BoardProps {
   tileSize: number;
   selection: GridPos[];
   clearingPositions: GridPos[];
+  dragSource: GridPos | null;
+  dropTarget: GridPos | null;
   onTilePress: (pos: GridPos) => void;
+  onTileHover: (pos: GridPos) => void;
 }
 
 export default function Board({
@@ -17,7 +20,10 @@ export default function Board({
   tileSize,
   selection,
   clearingPositions,
+  dragSource,
+  dropTarget,
   onTilePress,
+  onTileHover,
 }: BoardProps) {
   const cols = grid[0]?.length ?? 4;
 
@@ -49,7 +55,10 @@ export default function Board({
                 size={tileSize}
                 selected={sel}
                 clearing={clearing}
+                isDragSource={dragSource !== null && dragSource.row === r && dragSource.col === c}
+                isDropTarget={dropTarget !== null && dropTarget.row === r && dropTarget.col === c}
                 onPress={() => onTilePress(pos)}
+                onHover={() => onTileHover(pos)}
               />
             );
           }),
