@@ -114,6 +114,38 @@ function findMatchingPair(
   return null;
 }
 
+/**
+ * Finds the first pair of ADJACENT (Chebyshev distance 1) non-zero board
+ * positions whose product equals target. Used to locate a valid drag-trophy
+ * pair for the DRAG_DROP Case 3 path.
+ * Returns [src, dst] or null if no adjacent pair exists.
+ */
+function findAdjacentMatchingPair(
+  board: number[][],
+  target: number,
+): [{ row: number; col: number }, { row: number; col: number }] | null {
+  const rows = board.length;
+  const cols = board[0]?.length ?? 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (board[r][c] === 0) continue;
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const nr = r + dr;
+          const nc = c + dc;
+          if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+          if (board[nr][nc] === 0) continue;
+          if (board[r][c] * board[nr][nc] === target) {
+            return [{ row: r, col: c }, { row: nr, col: nc }];
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
 // ── resolveGravitySync ────────────────────────────────────────────────────────
 
 function resolveGravitySync(
@@ -226,6 +258,12 @@ type CycleSnapshot = {
   /** Target generated from the settled board. */
   target: number;
   /**
+   * TrophyMask after gravity settlement. For tap-path cycles this will always
+   * be all-false (CLEAR_COMPLETE resets trophyMask). Captured for completeness
+   * so replaySession can verify lifecycle correctness end-to-end.
+   */
+  trophyMask: boolean[][];
+  /**
    * The zeroed positions on the pre-gravity board — derived by recording which
    * cells were 0 after the reducer's TAP_TILE clearing but before resolveGravity.
    * Used in replay to verify cleared cells match exactly (Section D).
@@ -300,6 +338,7 @@ function recordSession(
         postGravityBoard: settledState.board.map((row) => [...row]),
         postGravityBonusMask: settledState.bonusMask.map((row) => [...row]),
         target: settledState.target,
+        trophyMask: settledState.trophyMask.map((row) => [...row]),
         preGravityZeroPositions,
       },
     });
@@ -372,6 +411,12 @@ function replaySession(log: CGReplayLog, profile: PracticeProfile): CGState {
           throw new Error(
             `[VM-CG-9] step ${i} bonusMask mismatch at [${r}][${c}]: ` +
               `replay=${settledState.bonusMask[r][c]} recorded=${snap.postGravityBonusMask[r][c]}`,
+          );
+        }
+        if (settledState.trophyMask[r][c] !== snap.trophyMask[r][c]) {
+          throw new Error(
+            `[VM-CG-9] step ${i} trophyMask mismatch at [${r}][${c}]: ` +
+              `replay=${settledState.trophyMask[r][c]} recorded=${snap.trophyMask[r][c]}`,
           );
         }
       }
@@ -694,9 +739,9 @@ export class CGHarness {
     //
     // replaySession now validates at every cycle, not just final state.
     // Verifies pre-gravity zero positions, post-gravity board, bonusMask,
-    // and target at each step. Any mismatch throws with step + coordinate detail.
-    // A passing run proves that each cycle — not just the end state — is
-    // deterministically reproduced from (seed, action log).
+    // trophyMask, and target at each step. Any mismatch throws with step +
+    // coordinate detail. A passing run proves that each cycle — not just the
+    // end state — is deterministically reproduced from (seed, action log).
 
     {
       const REPLAY_STEPS = 5;
@@ -725,11 +770,98 @@ export class CGHarness {
           `step ${i} snapshot bonusMask rows: expected ${ROWS}, got ${snap.postGravityBonusMask.length}`,
         );
         assertVM(
+          snap.trophyMask.length === ROWS,
+          'CG-9',
+          `step ${i} snapshot trophyMask rows: expected ${ROWS}, got ${snap.trophyMask.length}`,
+        );
+        assertVM(
           snap.preGravityZeroPositions.length >= 2,
           'CG-9',
           `step ${i} preGravityZeroPositions has fewer than 2 entries — tap pair must zero at least 2 cells`,
         );
       }
+    }
+
+    // ── VM-CG-10: drag-trophy lifecycle — trophyMask identical between two parallel runs ──
+    //
+    // Locates an adjacent cell pair whose product equals target (DRAG_DROP Case 3 —
+    // trophy creation). Runs dragMerge + resolveRespawn on two independent harnesses
+    // seeded identically. Verifies trophyMask, board, bonusMask, and target are
+    // identical after the drag-respawn cycle.
+    //
+    // This is the Section D harness verification for the DRAG path.
+
+    {
+      // Try several seeds to find one whose initial board has an adjacent matching
+      // pair (product = target). Deterministic — same seeds always find the same pair.
+      const TROPHY_SEEDS = [SEED_A, SEED_B, 777, 42, 100, 200, 300, 400, 500, 9_999];
+      let adjacentPair: [{ row: number; col: number }, { row: number; col: number }] | null = null;
+      let trophySeed = 0;
+
+      for (const seed of TROPHY_SEEDS) {
+        const s = CGHarness.create(seed).getState();
+        adjacentPair = findAdjacentMatchingPair(s.board, s.target);
+        if (adjacentPair !== null) {
+          trophySeed = seed;
+          break;
+        }
+      }
+
+      assertVM(
+        adjacentPair !== null,
+        'CG-10',
+        'Could not find a seed with an adjacent matching pair — trophy path untestable',
+      );
+
+      const [src, dst] = adjacentPair!;
+
+      // Run the full drag-trophy cycle on two parallel, independently seeded harnesses.
+      const afterDragA = CGHarness.create(trophySeed).dragMerge(src, dst).resolveRespawn().getState();
+      const afterDragB = CGHarness.create(trophySeed).dragMerge(src, dst).resolveRespawn().getState();
+
+      // trophyMask must be identical across both runs.
+      assertVM(
+        masksEqual(afterDragA.trophyMask, afterDragB.trophyMask),
+        'CG-10',
+        'trophyMask differs after same drag sequence on same seed',
+      );
+      // dst must be marked as a trophy.
+      assertVM(
+        afterDragA.trophyMask[dst.row][dst.col] === true,
+        'CG-10',
+        `trophyMask[${dst.row}][${dst.col}] not set — trophy not created at dst`,
+      );
+      // src must NOT be a trophy (it is respawned as a fresh tile).
+      assertVM(
+        afterDragA.trophyMask[src.row][src.col] === false,
+        'CG-10',
+        `trophyMask[${src.row}][${src.col}] is true — src incorrectly marked as trophy`,
+      );
+      // board must be identical.
+      assertVM(
+        gridsEqual(afterDragA.board, afterDragB.board),
+        'CG-10',
+        'board differs after same drag sequence on same seed',
+      );
+      // bonusMask must be identical.
+      assertVM(
+        masksEqual(afterDragA.bonusMask, afterDragB.bonusMask),
+        'CG-10',
+        'bonusMask differs after same drag sequence on same seed',
+      );
+      // target must be identical (static throughout round — TARGET LAW).
+      assertVM(
+        afterDragA.target === afterDragB.target,
+        'CG-10',
+        `target differs: ${afterDragA.target} vs ${afterDragB.target}`,
+      );
+      // dst board value must equal the original target (trophy retains its value).
+      assertVM(
+        afterDragA.board[dst.row][dst.col] === afterDragA.target,
+        'CG-10',
+        `trophy tile at [${dst.row}][${dst.col}] has value ${afterDragA.board[dst.row][dst.col]}, ` +
+          `expected target=${afterDragA.target}`,
+      );
     }
   }
 }
