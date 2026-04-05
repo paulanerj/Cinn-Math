@@ -30,15 +30,22 @@ export function evaluateSelection(
  * [NOTE] Intentionally searches non-adjacent combinations because CombineGrid's
  * TAP_TILE mechanic places no adjacency requirement on selections. This is
  * consistent with hasSolution being a stalemate detector, not a path validator.
+ *
+ * @param trophyMask  Optional mask of locked trophy tiles. Trophy cells are excluded
+ *                    from the search — they cannot participate in tap-selections or
+ *                    drag-merges, so a board is unsolvable if only trophy cells satisfy
+ *                    the target.
  */
 export function hasSolution(
   board: number[][],
   target: number,
   mode: EvalMode,
+  trophyMask?: boolean[][],
 ): boolean {
   const vals: number[] = [];
   for (let r = 0; r < board.length; r++) {
     for (let c = 0; c < (board[0]?.length ?? 0); c++) {
+      if (trophyMask?.[r]?.[c]) continue;   // locked trophy — cannot be selected
       vals.push(board[r][c]);
     }
   }

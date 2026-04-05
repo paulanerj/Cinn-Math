@@ -32,6 +32,12 @@ export interface CGState {
   board: number[][];
   /** Bonus tile mask — true where a tile is a bonus tile. Structurally aligned with board. */
   bonusMask: boolean[][];
+  /**
+   * Trophy tile mask — true where a tile is a locked trophy (result of a successful
+   * drag-merge). Trophy tiles retain their value but cannot be moved or dragged.
+   * Cleared on ADVANCE_ROUND (fresh board) and CLEAR_COMPLETE (gravity invalidates positions).
+   */
+  trophyMask: boolean[][];
   /** PRNG seed captured at session start — stored for replay readiness. */
   seed: number;
   /**
@@ -70,10 +76,10 @@ export type Action =
   | { type: 'RESOLVE_STALEMATE'; target: number }
   | {
       type: 'RESPAWN_COMPLETE';
-      /** Per-position spawn results from the RESPAWNING effect. */
+      /** Per-position spawn results from the RESPAWNING effect. Always [src] only — dst is a trophy. */
       respawns: Array<{ pos: GridPos; value: number; isBonus: boolean }>;
-      /** New target (regenerated after a full clear) or unchanged prior target (after a merge). */
-      target: number;
+      // [TARGET LAW] No target field — target is static for the full round.
+      // The reducer uses state.target unchanged.
     }
   | { type: 'PLAY_AGAIN'; newState: CGState };
 
@@ -107,6 +113,7 @@ export function initGame(
     mode: 'product',
     board,
     bonusMask,
+    trophyMask: Array.from({ length: ROWS }, () => Array(COLS).fill(false) as boolean[]),
     seed,
     dragSource: null,
     selection: [],
@@ -211,6 +218,11 @@ export function reducer(state: CGState, action: Action): CGState {
       const dstVal = state.board[dst.row][dst.col];
       if (srcVal === 0 || dstVal === 0) return { ...state, dragSource: null };
 
+      // Reject drag from or onto a trophy tile.
+      if (state.trophyMask[src.row][src.col] || state.trophyMask[dst.row][dst.col]) {
+        return { ...state, dragSource: null };
+      }
+
       // Validate adjacency: Chebyshev distance must be exactly 1.
       const isAdjacent =
         Math.max(Math.abs(src.row - dst.row), Math.abs(src.col - dst.col)) === 1;
@@ -223,28 +235,38 @@ export function reducer(state: CGState, action: Action): CGState {
         return { ...state, dragSource: null };
       }
 
-      // Case 3 — result === target: TROPHY. Both tiles cleared and respawned in-place.
+      // Case 3 — result === target: TROPHY.
       // [STATIC RESPAWN] Phase stays SELECTING — no gravity, no column collapse.
-      // clearingPositions drives the opacity-0 animation; respawnPositions triggers
-      // the RESPAWNING effect which fills the positions with fresh tiles.
+      // src is zeroed and will be respawned in-place (respawnPositions=[src]).
+      // dst retains its value and becomes a locked trophy (trophyMask[dst]=true).
+      // clearingPositions=[src] drives the opacity-0 animation for src only.
+      // [TARGET LAW] target is NOT regenerated. state.target carries forward.
       if (result === state.target) {
-        const trophyPositions: GridPos[] = [src, dst];
-        const posSet = new Set(trophyPositions.map((p) => `${p.row},${p.col}`));
-        const clearedBoard = state.board.map((r, ri) =>
-          r.map((v, ci) => (posSet.has(`${ri},${ci}`) ? 0 : v)),
+        const newBoard = state.board.map((r, ri) =>
+          r.map((v, ci) => (ri === src.row && ci === src.col ? 0 : v)),
         );
-        const clearedMask = state.bonusMask.map((r, ri) =>
-          r.map((v, ci) => (posSet.has(`${ri},${ci}`) ? false : v)),
+        const newBonusMask = state.bonusMask.map((r, ri) =>
+          r.map((v, ci) =>
+            ri === src.row && ci === src.col
+              ? false
+              : ri === dst.row && ci === dst.col
+              ? false   // dst becomes trophy — bonus flag cleared
+              : v,
+          ),
+        );
+        const newTrophyMask = state.trophyMask.map((r, ri) =>
+          r.map((v, ci) => (ri === dst.row && ci === dst.col ? true : v)),
         );
         return {
           ...state,
-          board: clearedBoard,
-          bonusMask: clearedMask,
+          board: newBoard,
+          bonusMask: newBonusMask,
+          trophyMask: newTrophyMask,
           dragSource: null,
           selection: [],
           selectionVal: 0,
-          clearingPositions: trophyPositions,
-          respawnPositions: trophyPositions,
+          clearingPositions: [src],
+          respawnPositions: [src],
           score: state.score + result,
           roundScore: state.roundScore + result,
         };
@@ -252,7 +274,7 @@ export function reducer(state: CGState, action: Action): CGState {
 
       // Case 2 — result < target: merge. Destination gets result, source removed.
       // [STATIC RESPAWN] Phase stays SELECTING — src empties and is respawned in-place.
-      // dst value is updated immediately (no animation needed).
+      // dst value is updated immediately. No trophy created.
       const mergedBoard = state.board.map((r, ri) =>
         r.map((v, ci) => {
           if (ri === src.row && ci === src.col) return 0;
@@ -276,6 +298,11 @@ export function reducer(state: CGState, action: Action): CGState {
     }
 
     case 'CLEAR_COMPLETE': {
+      // Gravity produces a fully fresh board — trophy positions are invalidated.
+      // Reset trophyMask so no stale locks carry into the new layout.
+      const freshTrophyMask: boolean[][] = Array.from({ length: ROWS }, () =>
+        Array(COLS).fill(false),
+      );
       const solvable = hasSolution(action.board, action.target, state.mode);
       const nextPhase = !solvable
         ? 'STALEMATE'
@@ -287,6 +314,7 @@ export function reducer(state: CGState, action: Action): CGState {
         phase: nextPhase,
         board: action.board,
         bonusMask: action.bonusMask,
+        trophyMask: freshTrophyMask,
         target: action.target,
         clearingPositions: [],
         respawnPositions: [],
@@ -296,25 +324,26 @@ export function reducer(state: CGState, action: Action): CGState {
     }
 
     case 'RESPAWN_COMPLETE': {
-      // Fill each respawned position in board and bonusMask.
+      // Fill each respawned position (always src only — dst is a trophy, unchanged).
       let newBoard = state.board;
-      let newMask = state.bonusMask;
+      let newBonusMask = state.bonusMask;
       for (const { pos, value, isBonus } of action.respawns) {
         newBoard = newBoard.map((r, ri) =>
           r.map((v, ci) => (ri === pos.row && ci === pos.col ? value : v)),
         );
-        newMask = newMask.map((r, ri) =>
+        newBonusMask = newBonusMask.map((r, ri) =>
           r.map((v, ci) => (ri === pos.row && ci === pos.col ? isBonus : v)),
         );
       }
-      // Check for stalemate after new tiles appear.
-      const solvable = hasSolution(newBoard, action.target, state.mode);
+      // [TARGET LAW] Target is static for the full round — use state.target unchanged.
+      // Trophy tiles are excluded from hasSolution via trophyMask (state.trophyMask
+      // already has dst marked true from DRAG_DROP; src was empty, is now refilled).
+      const solvable = hasSolution(newBoard, state.target, state.mode, state.trophyMask);
       return {
         ...state,
         phase: solvable ? 'SELECTING' : 'STALEMATE',
         board: newBoard,
-        bonusMask: newMask,
-        target: action.target,
+        bonusMask: newBonusMask,
         clearingPositions: [],
         respawnPositions: [],
       };
@@ -329,6 +358,7 @@ export function reducer(state: CGState, action: Action): CGState {
         phase: 'SELECTING',
         board: action.board,
         bonusMask: action.bonusMask,
+        trophyMask: Array.from({ length: ROWS }, () => Array(COLS).fill(false) as boolean[]),
         target: action.target,
         dragSource: null,
         selection: [],

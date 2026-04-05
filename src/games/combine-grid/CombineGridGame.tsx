@@ -170,44 +170,28 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
   }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── RESPAWNING effect: in-place tile refill after drag-merge ────────────────
-  // Fires when DRAG_DROP sets respawnPositions (1 pos for merge, 2 for clear).
-  // Spawns fresh tile(s) from the PRNG, generates a new target for full clears,
-  // then dispatches RESPAWN_COMPLETE after CLEAR_MS so the opacity animation plays.
-  // [STATIC RESPAWN] No gravity, no column collapse — tiles refill in-place.
+  // Fires when DRAG_DROP sets respawnPositions=[src].
+  // Spawns one fresh tile for src from the PRNG, then dispatches RESPAWN_COMPLETE
+  // after CLEAR_MS so the opacity-0 animation completes first.
+  // [STATIC RESPAWN] No gravity, no column collapse — src refills in-place.
+  // [TARGET LAW] Target is NOT regenerated here. state.target is static for
+  // the full round. The reducer uses state.target unchanged in RESPAWN_COMPLETE.
   // [PURITY] All PRNG calls happen here, not in the reducer.
 
   useEffect(() => {
     if (state.respawnPositions.length === 0) return;
 
-    // Snapshot respawnPositions and board at effect-entry. Do not read stateRef.
     const positions = state.respawnPositions;
-    const currentBoard = state.board;
-    const currentMode = state.mode;
-    const currentTarget = state.target;
 
-    // Spawn one tile per position — consumes PRNG tokens for each.
+    // Spawn one tile per position — always [src] only.
     const respawns = positions.map((pos) => {
       const sp = spawnTile(profile, prngRef.current);
       return { pos, value: sp.value, isBonus: sp.isBonus };
     });
 
-    // Full clear (both tiles removed, positions.length >= 2): generate a new target
-    // from the settled board (zeros filled with respawn values).
-    // Merge (only src removed, positions.length === 1): target is unchanged.
-    let target = currentTarget;
-    if (positions.length >= 2) {
-      const settledBoard = currentBoard.map((row, r) =>
-        row.map((val, c) => {
-          const rsp = respawns.find((x) => x.pos.row === r && x.pos.col === c);
-          return rsp !== undefined ? rsp.value : val;
-        }),
-      );
-      target = generateTarget(settledBoard, ROWS, COLS, currentMode, profile, prngRef.current);
-    }
-
     const id = setTimeout(() => {
       if (!isMounted.current) return;
-      dispatch({ type: 'RESPAWN_COMPLETE', respawns, target });
+      dispatch({ type: 'RESPAWN_COMPLETE', respawns });
     }, CLEAR_MS);
 
     return () => clearTimeout(id);

@@ -32,11 +32,12 @@
 //
 // [PIPELINE — DRAG path]
 //   1. dragMerge(src, dst) dispatches DRAG_START then DRAG_DROP
-//   2. DRAG_DROP: merge applies immediately; src zeroed, respawnPositions=[src]
-//      OR both cleared, respawnPositions=[src,dst]
-//   3. resolveRespawn() mirrors RESPAWNING effect: spawns tile(s) in-place,
-//      generates new target for full-clear, dispatches RESPAWN_COMPLETE
-//   4. RESPAWN_COMPLETE: reducer fills positions, checks stalemate
+//   2a. DRAG_DROP Case 2 (merge): src zeroed, dst=result, respawnPositions=[src]
+//   2b. DRAG_DROP Case 3 (trophy): src zeroed, dst stays=target (locked trophy),
+//       respawnPositions=[src] only — dst is never respawned
+//   3. resolveRespawn() mirrors RESPAWNING effect: spawns 1 tile for src,
+//      target unchanged (static for full round), dispatches RESPAWN_COMPLETE
+//   4. RESPAWN_COMPLETE: reducer fills src, checks stalemate with trophyMask
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
@@ -195,9 +196,9 @@ function resolveStalemateSync(
 // ── resolveRespawnSync ────────────────────────────────────────────────────────
 //
 // Mirrors the RESPAWNING effect in CombineGridGame.tsx without timers.
-// Fires when state.respawnPositions is non-empty (set by DRAG_DROP).
-// Spawns one tile per position, generates a new target for full clears (2 positions),
-// then dispatches RESPAWN_COMPLETE. Mirrors RESPAWNING effect exactly.
+// Fires when state.respawnPositions is non-empty (set by DRAG_DROP Case 3 or 2).
+// Always respawnPositions=[src] only — dst is a trophy, src is the only refill.
+// [TARGET LAW] Target is not regenerated — reducer uses state.target unchanged.
 
 function resolveRespawnSync(
   state: CGState,
@@ -206,27 +207,12 @@ function resolveRespawnSync(
 ): CGState {
   if (state.respawnPositions.length === 0) return state;
 
-  const positions = state.respawnPositions;
-
-  const respawns = positions.map((pos) => {
+  const respawns = state.respawnPositions.map((pos) => {
     const sp = spawnTile(profile, prng);
     return { pos, value: sp.value, isBonus: sp.isBonus };
   });
 
-  // Full clear (2 positions): generate a new target from the settled board.
-  // Merge (1 position): target unchanged.
-  let target = state.target;
-  if (positions.length >= 2) {
-    const settledBoard = state.board.map((row, r) =>
-      row.map((val, c) => {
-        const rsp = respawns.find((x) => x.pos.row === r && x.pos.col === c);
-        return rsp !== undefined ? rsp.value : val;
-      }),
-    );
-    target = generateTarget(settledBoard, ROWS, COLS, state.mode, profile, prng);
-  }
-
-  return reducer(state, { type: 'RESPAWN_COMPLETE', respawns, target });
+  return reducer(state, { type: 'RESPAWN_COMPLETE', respawns });
 }
 
 // ── Replay types ─────────────────────────────────────────────────────────────
