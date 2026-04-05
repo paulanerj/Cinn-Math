@@ -3,26 +3,40 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // [ROLE] Deterministic test harness for CombineGrid game logic.
-//        Zero React. Zero DOM. Synchronous gravity resolution.
+//        Zero React. Zero DOM. Synchronous resolution of all async effects.
 //
 // [PUBLIC API]
 //   CGHarness.create(seed, profile?)        → CGHarness  (new session)
 //   CGHarness.runVerificationMatrix()       → void (throws on first failure)
 //
-// [INSTANCE API]
+// [INSTANCE API — TAP path]
 //   .tapSequence(positions)    → new CGHarness  (dispatch TAP_TILE per position)
 //   .resolveGravity()          → new CGHarness  (synchronous orchestrator call)
+//
+// [INSTANCE API — DRAG path]
+//   .dragMerge(src, dst)       → new CGHarness  (dispatch DRAG_START + DRAG_DROP)
+//   .resolveRespawn()          → new CGHarness  (synchronous in-place respawn)
+//
+// [INSTANCE API — shared]
 //   .advanceRound()            → new CGHarness  (synchronous ROUND_OVER effect)
 //   .resolveStalemate()        → new CGHarness  (synchronous STALEMATE effect)
 //   .getState()                → CGState
 //
 // [INVARIANT] Zero React imports. No DOM. No async. No setTimeout.
 //
-// [PIPELINE] Mirrors production exactly:
+// [PIPELINE — TAP path]
 //   1. Reducer owns all logical mutations (TAP_TILE clears board + bonusMask)
 //   2. resolveGravity() reads state.board (already zeroed) + state.clearingPositions
 //   3. runGravityOrchestrator produces new grid, bonusMask, target
 //   4. CLEAR_COMPLETE dispatched — reducer applies result
+//
+// [PIPELINE — DRAG path]
+//   1. dragMerge(src, dst) dispatches DRAG_START then DRAG_DROP
+//   2. DRAG_DROP: merge applies immediately; src zeroed, respawnPositions=[src]
+//      OR both cleared, respawnPositions=[src,dst]
+//   3. resolveRespawn() mirrors RESPAWNING effect: spawns tile(s) in-place,
+//      generates new target for full-clear, dispatches RESPAWN_COMPLETE
+//   4. RESPAWN_COMPLETE: reducer fills positions, checks stalemate
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
@@ -176,6 +190,43 @@ function resolveStalemateSync(
 ): CGState {
   const target = generateTarget(state.board, ROWS, COLS, state.mode, profile, prng);
   return reducer(state, { type: 'RESOLVE_STALEMATE', target });
+}
+
+// ── resolveRespawnSync ────────────────────────────────────────────────────────
+//
+// Mirrors the RESPAWNING effect in CombineGridGame.tsx without timers.
+// Fires when state.respawnPositions is non-empty (set by DRAG_DROP).
+// Spawns one tile per position, generates a new target for full clears (2 positions),
+// then dispatches RESPAWN_COMPLETE. Mirrors RESPAWNING effect exactly.
+
+function resolveRespawnSync(
+  state: CGState,
+  prng: () => number,
+  profile: PracticeProfile,
+): CGState {
+  if (state.respawnPositions.length === 0) return state;
+
+  const positions = state.respawnPositions;
+
+  const respawns = positions.map((pos) => {
+    const sp = spawnTile(profile, prng);
+    return { pos, value: sp.value, isBonus: sp.isBonus };
+  });
+
+  // Full clear (2 positions): generate a new target from the settled board.
+  // Merge (1 position): target unchanged.
+  let target = state.target;
+  if (positions.length >= 2) {
+    const settledBoard = state.board.map((row, r) =>
+      row.map((val, c) => {
+        const rsp = respawns.find((x) => x.pos.row === r && x.pos.col === c);
+        return rsp !== undefined ? rsp.value : val;
+      }),
+    );
+    target = generateTarget(settledBoard, ROWS, COLS, state.mode, profile, prng);
+  }
+
+  return reducer(state, { type: 'RESPAWN_COMPLETE', respawns, target });
 }
 
 // ── Replay types ─────────────────────────────────────────────────────────────
@@ -389,6 +440,30 @@ export class CGHarness {
    */
   resolveGravity(): CGHarness {
     const nextState = resolveGravitySync(this._state, this._prng, this._profile);
+    return new CGHarness(nextState, this._prng, this._profile);
+  }
+
+  /**
+   * Dispatches DRAG_START then DRAG_DROP for the given source and destination.
+   * After this call, state will have respawnPositions set if the drop was valid.
+   * Call resolveRespawn() to complete the in-place refill.
+   */
+  dragMerge(
+    src: { row: number; col: number },
+    dst: { row: number; col: number },
+  ): CGHarness {
+    let state = this._state;
+    state = reducer(state, { type: 'DRAG_START', pos: src });
+    state = reducer(state, { type: 'DRAG_DROP', src, dst });
+    return new CGHarness(state, this._prng, this._profile);
+  }
+
+  /**
+   * Synchronously resolves one in-place respawn cycle (mirrors RESPAWNING effect).
+   * No-op if respawnPositions is empty.
+   */
+  resolveRespawn(): CGHarness {
+    const nextState = resolveRespawnSync(this._state, this._prng, this._profile);
     return new CGHarness(nextState, this._prng, this._profile);
   }
 

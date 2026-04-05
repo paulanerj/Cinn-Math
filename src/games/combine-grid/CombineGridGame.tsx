@@ -169,6 +169,51 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     return () => clearTimeout(id);
   }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── RESPAWNING effect: in-place tile refill after drag-merge ────────────────
+  // Fires when DRAG_DROP sets respawnPositions (1 pos for merge, 2 for clear).
+  // Spawns fresh tile(s) from the PRNG, generates a new target for full clears,
+  // then dispatches RESPAWN_COMPLETE after CLEAR_MS so the opacity animation plays.
+  // [STATIC RESPAWN] No gravity, no column collapse — tiles refill in-place.
+  // [PURITY] All PRNG calls happen here, not in the reducer.
+
+  useEffect(() => {
+    if (state.respawnPositions.length === 0) return;
+
+    // Snapshot respawnPositions and board at effect-entry. Do not read stateRef.
+    const positions = state.respawnPositions;
+    const currentBoard = state.board;
+    const currentMode = state.mode;
+    const currentTarget = state.target;
+
+    // Spawn one tile per position — consumes PRNG tokens for each.
+    const respawns = positions.map((pos) => {
+      const sp = spawnTile(profile, prngRef.current);
+      return { pos, value: sp.value, isBonus: sp.isBonus };
+    });
+
+    // Full clear (both tiles removed, positions.length >= 2): generate a new target
+    // from the settled board (zeros filled with respawn values).
+    // Merge (only src removed, positions.length === 1): target is unchanged.
+    let target = currentTarget;
+    if (positions.length >= 2) {
+      const settledBoard = currentBoard.map((row, r) =>
+        row.map((val, c) => {
+          const rsp = respawns.find((x) => x.pos.row === r && x.pos.col === c);
+          return rsp !== undefined ? rsp.value : val;
+        }),
+      );
+      target = generateTarget(settledBoard, ROWS, COLS, currentMode, profile, prngRef.current);
+    }
+
+    const id = setTimeout(() => {
+      if (!isMounted.current) return;
+      dispatch({ type: 'RESPAWN_COMPLETE', respawns, target });
+    }, CLEAR_MS);
+
+    return () => clearTimeout(id);
+  }, [state.respawnPositions]); // eslint-disable-line react-hooks/exhaustive-deps
+  // [NOTE] profile and prngRef are stable (memo / ref) — omitting is safe.
+
   // ── Render: FINAL ───────────────────────────────────────────────────────────
   if (state.phase === 'FINAL') {
     return (

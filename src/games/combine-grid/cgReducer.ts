@@ -48,6 +48,13 @@ export interface CGState {
   roundScores: number[];
   timeLeft: number;
   clearingPositions: GridPos[];
+  /**
+   * Positions that need in-place tile respawn after a drag-merge action.
+   * Non-empty while the RESPAWNING effect is pending; cleared by RESPAWN_COMPLETE.
+   * Distinct from clearingPositions (gravity pipeline signal) — respawn is
+   * in-place, no column collapse.
+   */
+  respawnPositions: GridPos[];
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -61,6 +68,13 @@ export type Action =
   | { type: 'CLEAR_COMPLETE'; board: number[][]; bonusMask: boolean[][]; target: number }
   | { type: 'ADVANCE_ROUND'; board: number[][]; bonusMask: boolean[][]; target: number }
   | { type: 'RESOLVE_STALEMATE'; target: number }
+  | {
+      type: 'RESPAWN_COMPLETE';
+      /** Per-position spawn results from the RESPAWNING effect. */
+      respawns: Array<{ pos: GridPos; value: number; isBonus: boolean }>;
+      /** New target (regenerated after a full clear) or unchanged prior target (after a merge). */
+      target: number;
+    }
   | { type: 'PLAY_AGAIN'; newState: CGState };
 
 // ── Lazy initializer ──────────────────────────────────────────────────────────
@@ -104,6 +118,7 @@ export function initGame(
     roundScores: [],
     timeLeft: ROUND_DURATION_SECS,
     clearingPositions: [],
+    respawnPositions: [],
   };
 }
 
@@ -126,6 +141,7 @@ export function reducer(state: CGState, action: Action): CGState {
           selection: [],
           selectionVal: 0,
           clearingPositions: [],
+          respawnPositions: [],
         };
       }
       return { ...state, timeLeft: next };
@@ -165,6 +181,7 @@ export function reducer(state: CGState, action: Action): CGState {
           selection: [],
           selectionVal: 0,
           clearingPositions: newSel,
+          respawnPositions: [],
           score: state.score + basePoints,
           roundScore: state.roundScore + basePoints,
         };
@@ -206,10 +223,13 @@ export function reducer(state: CGState, action: Action): CGState {
         return { ...state, dragSource: null };
       }
 
-      // Case 3 — result === target: TROPHY. Both tiles cleared.
+      // Case 3 — result === target: TROPHY. Both tiles cleared and respawned in-place.
+      // [STATIC RESPAWN] Phase stays SELECTING — no gravity, no column collapse.
+      // clearingPositions drives the opacity-0 animation; respawnPositions triggers
+      // the RESPAWNING effect which fills the positions with fresh tiles.
       if (result === state.target) {
-        const clearingPositions: GridPos[] = [src, dst];
-        const posSet = new Set(clearingPositions.map((p) => `${p.row},${p.col}`));
+        const trophyPositions: GridPos[] = [src, dst];
+        const posSet = new Set(trophyPositions.map((p) => `${p.row},${p.col}`));
         const clearedBoard = state.board.map((r, ri) =>
           r.map((v, ci) => (posSet.has(`${ri},${ci}`) ? 0 : v)),
         );
@@ -218,19 +238,21 @@ export function reducer(state: CGState, action: Action): CGState {
         );
         return {
           ...state,
-          phase: 'CLEARING',
           board: clearedBoard,
           bonusMask: clearedMask,
           dragSource: null,
           selection: [],
           selectionVal: 0,
-          clearingPositions,
+          clearingPositions: trophyPositions,
+          respawnPositions: trophyPositions,
           score: state.score + result,
           roundScore: state.roundScore + result,
         };
       }
 
       // Case 2 — result < target: merge. Destination gets result, source removed.
+      // [STATIC RESPAWN] Phase stays SELECTING — src empties and is respawned in-place.
+      // dst value is updated immediately (no animation needed).
       const mergedBoard = state.board.map((r, ri) =>
         r.map((v, ci) => {
           if (ri === src.row && ci === src.col) return 0;
@@ -243,13 +265,13 @@ export function reducer(state: CGState, action: Action): CGState {
       );
       return {
         ...state,
-        phase: 'CLEARING',
         board: mergedBoard,
         bonusMask: mergedMask,
         dragSource: null,
         selection: [],
         selectionVal: 0,
         clearingPositions: [src],
+        respawnPositions: [src],
       };
     }
 
@@ -267,8 +289,34 @@ export function reducer(state: CGState, action: Action): CGState {
         bonusMask: action.bonusMask,
         target: action.target,
         clearingPositions: [],
+        respawnPositions: [],
         selection: [],
         selectionVal: 0,
+      };
+    }
+
+    case 'RESPAWN_COMPLETE': {
+      // Fill each respawned position in board and bonusMask.
+      let newBoard = state.board;
+      let newMask = state.bonusMask;
+      for (const { pos, value, isBonus } of action.respawns) {
+        newBoard = newBoard.map((r, ri) =>
+          r.map((v, ci) => (ri === pos.row && ci === pos.col ? value : v)),
+        );
+        newMask = newMask.map((r, ri) =>
+          r.map((v, ci) => (ri === pos.row && ci === pos.col ? isBonus : v)),
+        );
+      }
+      // Check for stalemate after new tiles appear.
+      const solvable = hasSolution(newBoard, action.target, state.mode);
+      return {
+        ...state,
+        phase: solvable ? 'SELECTING' : 'STALEMATE',
+        board: newBoard,
+        bonusMask: newMask,
+        target: action.target,
+        clearingPositions: [],
+        respawnPositions: [],
       };
     }
 
@@ -288,11 +336,12 @@ export function reducer(state: CGState, action: Action): CGState {
         roundScore: 0,
         timeLeft: ROUND_DURATION_SECS,
         clearingPositions: [],
+        respawnPositions: [],
       };
     }
 
     case 'RESOLVE_STALEMATE': {
-      return { ...state, phase: 'SELECTING', target: action.target };
+      return { ...state, phase: 'SELECTING', target: action.target, respawnPositions: [] };
     }
 
     case 'PLAY_AGAIN':
