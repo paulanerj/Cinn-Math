@@ -9,6 +9,7 @@ interface BoardProps {
   tileSize: number;
   selection: GridPos[];
   clearingPositions: GridPos[];
+  trophyMask: boolean[][];
   dragSource: GridPos | null;
   dropTarget: GridPos | null;
   onTilePress: (pos: GridPos) => void;
@@ -20,6 +21,7 @@ export default function Board({
   tileSize,
   selection,
   clearingPositions,
+  trophyMask,
   dragSource,
   dropTarget,
   onTilePress,
@@ -48,6 +50,7 @@ export default function Board({
             const pos: GridPos = { row: r, col: c };
             const sel = isSelected(selection, pos);
             const clearing = clearingPositions.some((p) => p.row === r && p.col === c);
+            const isTrophy = trophyMask[r]?.[c] ?? false;
             return (
               <Tile
                 key={`${r},${c}`}
@@ -55,6 +58,7 @@ export default function Board({
                 size={tileSize}
                 selected={sel}
                 clearing={clearing}
+                isTrophy={isTrophy}
                 isDragSource={dragSource !== null && dragSource.row === r && dragSource.col === c}
                 isDropTarget={dropTarget !== null && dropTarget.row === r && dropTarget.col === c}
                 onPress={() => onTilePress(pos)}

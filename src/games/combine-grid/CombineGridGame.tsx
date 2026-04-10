@@ -347,6 +347,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
           tileSize={tileSize}
           selection={state.selection}
           clearingPositions={state.clearingPositions}
+          trophyMask={state.trophyMask}
           dragSource={state.dragSource}
           dropTarget={dropTarget}
           onTilePress={handleTilePress}
