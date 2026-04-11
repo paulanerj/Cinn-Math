@@ -36,7 +36,7 @@ export {
 export type { PracticeProfile, ProfileId } from './PracticeProfile';
 
 // ── Spawn engine ──────────────────────────────────────────────────────────────
-export { spawnTile, spawnBoard, spawnColumn } from './SpawnEngine';
+export { spawnTile, spawnBoard, spawnColumn, spawnTileWeighted } from './SpawnEngine';
 export type { SpawnedTile } from './SpawnEngine';
 
 // ── Grid engine ───────────────────────────────────────────────────────────────

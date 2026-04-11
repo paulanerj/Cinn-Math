@@ -85,3 +85,84 @@ export function spawnColumn(
   }
   return tiles;
 }
+
+// ── Weighted spawn (Phase 6) ──────────────────────────────────────────────────
+
+/**
+ * Returns all integers v in [min, max] where v > 1 and target % v === 0.
+ * Excludes 1 so that "value-1" tiles are handled by the separate explicit
+ * probability bucket in spawnTileWeighted.
+ */
+function getFactors(target: number, min: number, max: number): number[] {
+  const lo = Math.max(min, 2); // skip 1 — handled by explicit bucket
+  const factors: number[] = [];
+  for (let v = lo; v <= max; v++) {
+    if (target % v === 0) factors.push(v);
+  }
+  return factors;
+}
+
+/**
+ * Spawns a tile using the gameplay-weighted distribution:
+ *
+ *  10%  → value 1   (low-utility "filler" tiles; combines two ×5% spec slots
+ *                    — the "value 0 / dead tile" slot is omitted because
+ *                    board[r][c]=0 is the architecture's empty-cell sentinel
+ *                    and cannot safely represent a live tile without a larger
+ *                    refactor. Tracked as follow-up work.)
+ *  50%  → a factor of `target` in (1, tileMax] ∩ [tileMin, tileMax]
+ *  40%  → a non-factor of `target` in (1, tileMax] ∩ [tileMin, tileMax]
+ *
+ * Each call consumes exactly 3 PRNG values regardless of outcome so the
+ * call-count stays portable across sessions (replay-safe).
+ *
+ * Falls back to a uniform pick from [tileMin, tileMax] if a category's
+ * candidate list is empty (e.g. target is prime and the prime lies outside
+ * the tile range → no factors available → fall back to uniform).
+ *
+ * @param target  The current round target value used to compute factor lists.
+ * @param profile Active practice profile for tile range and bonus probability.
+ * @param prng    Session PRNG. Advances by exactly 3 calls.
+ */
+export function spawnTileWeighted(
+  target: number,
+  profile: PracticeProfile,
+  prng: () => number,
+): SpawnedTile {
+  const categoryRoll = prng(); // call 1 — always consumed
+  const valueRoll    = prng(); // call 2 — always consumed
+  const bonusRoll    = prng(); // call 3 — always consumed
+
+  const { tileMin, tileMax, bonusTileProbability } = profile;
+  let value: number;
+
+  if (categoryRoll < 0.10) {
+    // 10%: explicit value-1 tile
+    value = 1;
+  } else if (categoryRoll < 0.60) {
+    // 50%: factor of target (excludes 1)
+    const factors = getFactors(target, tileMin, tileMax);
+    if (factors.length > 0) {
+      value = factors[Math.floor(valueRoll * factors.length)];
+    } else {
+      // fallback: uniform over full profile range
+      value = Math.floor(valueRoll * (tileMax - tileMin + 1)) + tileMin;
+    }
+  } else {
+    // 40%: non-factor of target (excludes 1)
+    const factorSet = new Set(getFactors(target, tileMin, tileMax));
+    const nonFactors: number[] = [];
+    const lo = Math.max(tileMin, 2);
+    for (let v = lo; v <= tileMax; v++) {
+      if (!factorSet.has(v)) nonFactors.push(v);
+    }
+    if (nonFactors.length > 0) {
+      value = nonFactors[Math.floor(valueRoll * nonFactors.length)];
+    } else {
+      // fallback: uniform over full profile range
+      value = Math.floor(valueRoll * (tileMax - tileMin + 1)) + tileMin;
+    }
+  }
+
+  return { value, isBonus: bonusRoll < bonusTileProbability };
+}

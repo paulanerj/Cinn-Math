@@ -1,0 +1,30 @@
+/* ── CombineGrid tile animations ─────────────────────────────────────────────
+   Imported once by CombineGridGame.tsx.
+   All keyframe names are prefixed with "cg" to avoid collisions.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/* Phase 3 — Merge pop: destination tile bounces when it receives a result.
+   Plays on the dst tile immediately after DRAG_DROP commits a merge.        */
+@keyframes cgTilePop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.28); }
+  68%  { transform: scale(0.94); }
+  100% { transform: scale(1); }
+}
+
+/* Phase 4 — Spawn pop: tile appears from nothing after in-place respawn.
+   Plays on the src tile after RESPAWN_COMPLETE fills the empty slot.        */
+@keyframes cgTileSpawn {
+  0%   { transform: scale(0);    opacity: 0; }
+  52%  { transform: scale(1.18); opacity: 1; }
+  78%  { transform: scale(0.94); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+
+/* Phase 5 — Particle burst: sparkle for trophy merges.
+   Uses CSS custom properties --pdx / --pdy set as inline style on each particle
+   element so every particle travels in its own direction.                   */
+@keyframes cgParticleBurst {
+  0%   { transform: translate(0px, 0px) scale(1.1); opacity: 1; }
+  100% { transform: translate(var(--pdx), var(--pdy)) scale(0);   opacity: 0; }
+}
