@@ -15,10 +15,14 @@
 // [PHASE 6]  spawnTileWeighted — 10 % value-1 / 50 % factor / 40 % non-factor
 //            used in the RESPAWNING effect and gravity refill spawnValue callback.
 //
+// [TASK 2]   mergeHighlight — drop-target border reflects result vs target.
+// [TASK 4]   boardShaking / trophyPopups — celebration sequence on trophy.
+// [TASK 5]   Synthesized Web Audio API sounds — no audio files required.
+//
 // [PURITY CONTRACT]
 //   reducer()        — still pure; unchanged.
 //   All PRNG calls   — in effects / spawn callbacks, never in reducer.
-//   Particle dirs    — Math.random() is acceptable for pure-visual elements.
+//   Particle dirs / Math.random() acceptable for pure-visual elements.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, {
@@ -63,6 +67,72 @@ function computeTileSize(): number {
   const availH = window.innerHeight - HUD_TOP_H - HUD_BOT_H - SAFE_MARGIN * 2;
   const availW = window.innerWidth - SAFE_MARGIN * 2;
   return Math.min(gridComputeTileSize(availH, availW, ROWS, COLS), 80);
+}
+
+// ── Task 5: Synthesised sound engine ─────────────────────────────────────────
+// Uses Web Audio API oscillators — no audio files needed.
+// Math.random() for jitter is fine: pure-visual / audio layer.
+
+let _synthCtx: AudioContext | null = null;
+function getSynthCtx(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  if (!_synthCtx) {
+    const Ctor =
+      window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (Ctor) _synthCtx = new Ctor();
+  }
+  return _synthCtx;
+}
+
+function playTone(
+  freq: number,
+  dur: number,
+  type: OscillatorType = 'sine',
+  vol = 0.22,
+  startOffset = 0,
+): void {
+  try {
+    const ctx = getSynthCtx();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(vol, ctx.currentTime + startOffset);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startOffset + dur);
+    osc.start(ctx.currentTime + startOffset);
+    osc.stop(ctx.currentTime + startOffset + dur + 0.01);
+  } catch {
+    // Silently swallow audio errors — they must not affect game state.
+  }
+}
+
+/** Drag-start: soft click */
+function playSoundDragStart() { playTone(440, 0.05, 'triangle', 0.12); }
+/** Valid merge (result < target): satisfying pop */
+function playSoundMerge()     { playTone(523, 0.11, 'sine',     0.28); }
+/** Trophy merge (result === target): ascending sparkle chime */
+function playSoundTrophy() {
+  playTone(784,  0.08, 'sine', 0.28, 0.00);
+  playTone(1047, 0.08, 'sine', 0.28, 0.07);
+  playTone(1319, 0.12, 'sine', 0.28, 0.14);
+}
+/** Invalid merge (result > target): muted thud */
+function playSoundInvalid()   { playTone(160, 0.10, 'sawtooth', 0.18); }
+
+// ── Trophy popup type ─────────────────────────────────────────────────────────
+
+interface TrophyPopup {
+  id: number;
+  /** Viewport x of tile centre — used for fixed positioning. */
+  x: number;
+  /** Viewport y of tile centre — popup floats upward from here. */
+  y: number;
 }
 
 // ── Particle type ─────────────────────────────────────────────────────────────
@@ -132,6 +202,10 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
 
   // ── Phase 5: particle state ───────────────────────────────────────────────────
   const [particles, setParticles] = useState<Particle[]>([]);
+
+  // ── Task 4: board shake + trophy popup state ──────────────────────────────────
+  const [boardShaking, setBoardShaking] = useState(false);
+  const [trophyPopups, setTrophyPopups] = useState<TrophyPopup[]>([]);
 
   // ── Countdown tick ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -297,9 +371,14 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     const row = parseInt(tileEl.dataset.row ?? '-1', 10);
     const col = parseInt(tileEl.dataset.col ?? '-1', 10);
     if (row < 0 || col < 0) return;
+    // Don't start drag from a trophy tile (reducer also blocks this).
+    if (state.trophyMask[row]?.[col]) return;
 
     // Prevent browser scroll / text-selection during drag.
     e.preventDefault();
+
+    // Task 5: drag-start sound.
+    playSoundDragStart();
 
     dispatch({ type: 'DRAG_START', pos: { row, col } });
     setGhostPos({ x: e.clientX, y: e.clientY });
@@ -307,7 +386,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
 
     // Capture so pointermove/pointerup always route to this element.
     containerRef.current?.setPointerCapture(e.pointerId);
-  }, [state.phase]);
+  }, [state.phase, state.trophyMask]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (state.dragSource === null) return;
@@ -326,6 +405,27 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     }
     setHoverPos(null);
   }, [state.dragSource]);
+
+  // Task 4: emit board-shake + score popup for a trophy merge.
+  const emitTrophyCelebration = useCallback((dst: GridPos) => {
+    const boardRect = boardRef.current?.getBoundingClientRect();
+
+    // Board shake.
+    setBoardShaking(true);
+    setTimeout(() => setBoardShaking(false), 140);
+
+    // Score popup "+1 trophy" anchored to tile centre in viewport coords.
+    if (boardRect) {
+      const cellSize = tileSize + GAP;
+      const px = boardRect.left + BOARD_PAD + dst.col * cellSize + tileSize / 2;
+      const py = boardRect.top  + BOARD_PAD + dst.row * cellSize + tileSize / 2;
+      const popup: TrophyPopup = { id: Date.now(), x: px, y: py };
+      setTrophyPopups((prev) => [...prev, popup]);
+      setTimeout(() => {
+        setTrophyPopups((prev) => prev.filter((p) => p.id !== popup.id));
+      }, 950);
+    }
+  }, [tileSize]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (state.dragSource === null) {
@@ -346,8 +446,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
         const dst = { row, col };
         const src = state.dragSource;
 
-        // ── Phase 5: detect trophy merge for particle burst ─────────────────
-        // Done before dispatch so we read unmodified board state.
+        // Evaluate merge outcome before dispatch (board is still unmodified).
         const srcVal = state.board[src.row][src.col];
         const dstVal = state.board[dst.row][dst.col];
         const result = srcVal * dstVal;
@@ -362,14 +461,29 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
           !state.trophyMask[dst.row]?.[dst.col] &&
           srcVal !== 0 &&
           dstVal !== 0;
+        const isValidMerge =
+          isAdj &&
+          result < state.target &&
+          !state.trophyMask[src.row]?.[src.col] &&
+          !state.trophyMask[dst.row]?.[dst.col] &&
+          srcVal !== 0 &&
+          dstVal !== 0;
+        const isInvalidMerge = isAdj && result > state.target;
 
-        if (isTrophyMerge) emitTrophyParticles(dst);
+        // ── Phase 5 + Task 4: trophy celebration sequence ───────────────────
+        if (isTrophyMerge) {
+          emitTrophyParticles(dst);
+          emitTrophyCelebration(dst);
+          playSoundTrophy();           // Task 5
+        } else if (isValidMerge) {
+          playSoundMerge();            // Task 5
+        } else if (isInvalidMerge) {
+          playSoundInvalid();          // Task 5
+        }
 
         dispatch({ type: 'DRAG_DROP', src, dst });
 
         // ── Phase 3: merge-pop animation on destination ─────────────────────
-        // Fires on any valid drop (reducer will snap back if invalid; brief
-        // animation on an invalid drop is inconsequential and gives feedback).
         setPoppingPos(dst);
         setTimeout(() => setPoppingPos(null), 380);
       } else {
@@ -381,7 +495,8 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
 
     setGhostPos(null);
     setHoverPos(null);
-  }, [state.dragSource, state.board, state.target, state.trophyMask, emitTrophyParticles]);
+  }, [state.dragSource, state.board, state.target, state.trophyMask,
+      emitTrophyParticles, emitTrophyCelebration]);
 
   const handlePointerCancel = useCallback(() => {
     if (state.dragSource !== null) dispatch({ type: 'DRAG_CANCEL' });
@@ -413,6 +528,18 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     const color =
       result === state.target ? '#22c55e' : result > state.target ? '#ef4444' : '#d1d5db';
     return { label: `${srcVal}×${dstVal}=${result}`, color };
+  })();
+
+  // Task 2: merge highlight classification for the drop-target tile border.
+  const mergeHighlight: 'invalid' | 'valid' | 'trophy' | null = (() => {
+    if (state.dragSource === null || dropTarget === null) return null;
+    const srcVal = state.board[state.dragSource.row][state.dragSource.col];
+    const dstVal = state.board[dropTarget.row][dropTarget.col];
+    if (dstVal === 0 || srcVal === 0) return null;
+    const result = srcVal * dstVal;
+    if (result === state.target) return 'trophy';
+    if (result > state.target)  return 'invalid';
+    return 'valid';
   })();
 
   // HUD equation preview (text below board — kept alongside tile overlay).
@@ -543,6 +670,8 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
           poppingPos={poppingPos}
           spawnedPositions={spawnedPositions}
           tileOverlay={tileOverlay}
+          mergeHighlight={mergeHighlight}
+          isShaking={boardShaking}
           boardRef={boardRef}
         />
       </div>
@@ -638,6 +767,30 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
             ['--pdy' as string]: `${Math.sin(p.angle) * p.dist}px`,
           } as React.CSSProperties}
         />
+      ))}
+
+      {/* ── Task 4: Trophy score popups ───────────────────────────────────────── */}
+      {/* "+1 trophy" floats upward from the tile centre for 900 ms.             */}
+      {trophyPopups.map((popup) => (
+        <div
+          key={popup.id}
+          style={{
+            position: 'fixed',
+            left: popup.x,
+            top: popup.y - tileSize / 2 - 8,
+            pointerEvents: 'none',
+            zIndex: 70,
+            color: '#ffd700',
+            fontWeight: 900,
+            fontSize: 15,
+            textShadow: '0 1px 6px rgba(0,0,0,0.70)',
+            whiteSpace: 'nowrap',
+            animation: 'cgScorePopup 0.9s ease-out forwards',
+            // translateX(-50%) is baked into the keyframe to keep the popup centred.
+          }}
+        >
+          +1 trophy
+        </div>
       ))}
     </div>
   );

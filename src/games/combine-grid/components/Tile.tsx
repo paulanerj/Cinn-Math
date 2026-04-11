@@ -13,6 +13,9 @@
 // [PHASE 3]  isPopping  — triggers cgTilePop keyframe on merge destination.
 // [PHASE 4]  isSpawning — triggers cgTileSpawn keyframe on respawned tile.
 //
+// [TASK 1]   isTrophy — gold gradient, gold glow, cgTrophyPulse animation.
+// [TASK 2]   mergeHighlight — drop-target border/shadow varies by result.
+//
 // [PURITY]   Pure presentational component.  No dispatch, no PRNG.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -38,6 +41,14 @@ interface TileProps {
   /** Phase 4: triggers cgTileSpawn animation (tile just appeared from respawn). */
   isSpawning?: boolean;
   /**
+   * Task 2: merge result classification for the drop-target tile.
+   * 'invalid' = result > target (red border)
+   * 'valid'   = result < target (neutral blue)
+   * 'trophy'  = result === target (gold glow)
+   * Only set on the tile at dropTarget when a drag is active.
+   */
+  mergeHighlight?: 'invalid' | 'valid' | 'trophy';
+  /**
    * Phase 2: equation preview shown as a tooltip above the drop-target tile.
    * Only set on the tile at dropTarget position when a drag is in progress.
    */
@@ -51,9 +62,10 @@ interface TileProps {
 /**
  * Background colour for a tile by value.
  * Exported so CombineGridGame can apply the same colour to the ghost tile.
+ * For trophy tiles the caller should use the gold gradient CSS directly.
  */
 export function tileBackground(val: number, isTrophy: boolean): string {
-  if (isTrophy) return '#78350f'; // dark amber — locked trophy
+  if (isTrophy) return 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 45%, #d97706 100%)';
   if (val <= 0) return '#1f1f23'; // zero / dead tile — near-black
   if (val <= 2) return '#7c2d12';
   if (val <= 4) return '#9a3412';
@@ -70,10 +82,16 @@ const BASE_SHADOW =
   '0 2px 0 rgba(0,0,0,0.35), 0 4px 8px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.18)';
 const SEL_SHADOW =
   '0 0 0 3px rgba(255,180,0,0.85), 0 4px 16px rgba(255,120,0,0.45), inset 0 1px 0 rgba(255,255,255,0.25)';
-const DROP_TGT_SHADOW =
-  '0 0 0 3px rgba(80,220,120,0.90), 0 4px 16px rgba(40,180,80,0.40), inset 0 1px 0 rgba(255,255,255,0.25)';
+// Task 1 — Trophy: gold glow as specified.
 const TROPHY_SHADOW =
-  '0 0 0 3px rgba(251,191,36,0.90), 0 4px 16px rgba(245,158,11,0.55), inset 0 1px 0 rgba(255,255,255,0.22)';
+  '0 0 12px rgba(255,215,0,0.6), 0 0 0 2px #ffd700, inset 0 1px 0 rgba(255,255,255,0.30)';
+// Task 2 — Drop-target shadows vary by merge result.
+const DROP_INVALID_SHADOW =
+  '0 0 0 3px rgba(239,68,68,0.90), 0 4px 16px rgba(220,38,38,0.40), inset 0 1px 0 rgba(255,255,255,0.20)';
+const DROP_VALID_SHADOW =
+  '0 0 0 3px rgba(96,165,250,0.85), 0 4px 16px rgba(59,130,246,0.35), inset 0 1px 0 rgba(255,255,255,0.20)';
+const DROP_TROPHY_SHADOW =
+  '0 0 0 3px rgba(255,215,0,0.95), 0 4px 20px rgba(255,215,0,0.55), inset 0 1px 0 rgba(255,255,255,0.30)';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -89,41 +107,56 @@ export default function Tile({
   isTrophy,
   isPopping,
   isSpawning,
+  mergeHighlight,
   eqOverlay,
 }: TileProps) {
   const radius = Math.min(BASE_RADIUS_PX, size * 0.28);
+
+  // Task 2: drop-target shadow depends on mergeHighlight when a drag is active.
+  const dropTargetShadow =
+    mergeHighlight === 'invalid' ? DROP_INVALID_SHADOW
+    : mergeHighlight === 'trophy' ? DROP_TROPHY_SHADOW
+    : DROP_VALID_SHADOW;
 
   const boxShadow = isTrophy
     ? TROPHY_SHADOW
     : isDragSource
     ? DRAG_SRC_SHADOW
     : isDropTarget
-    ? DROP_TGT_SHADOW
+    ? dropTargetShadow
     : selected
     ? SEL_SHADOW
     : BASE_SHADOW;
 
+  // Task 2: border colour matches the merge highlight classification.
+  const dropTargetBorder =
+    mergeHighlight === 'invalid' ? '2px solid rgba(239,68,68,0.90)'
+    : mergeHighlight === 'trophy' ? '2px solid #ffd700'
+    : '2px solid rgba(96,165,250,0.85)';
+
   const border = isTrophy
-    ? '2px solid rgba(251,191,36,0.90)'
+    ? '2px solid #ffd700'           // Task 1: spec-exact gold border
     : isDragSource
     ? '2px solid rgba(100,160,255,0.90)'
     : isDropTarget
-    ? '2px solid rgba(80,220,120,0.90)'
+    ? dropTargetBorder
     : selected
     ? '2px solid rgba(255,200,60,0.90)'
     : '2px solid rgba(0,0,0,0.18)';
 
-  // Base scale for non-animated states.
+  // Base scale for non-animated states (trophy tiles are never drag/drop targets).
   const baseScale = isDragSource || isDropTarget || selected ? 'scale(1.07)' : 'scale(1)';
 
-  // Active CSS animation — cgTilePop / cgTileSpawn defined in animations.css.
-  // When an animation is running, inline transform is omitted (animation keyframes
-  // own the transform property during playback; after the animation the inline
-  // value re-asserts — both end at scale(1) so there is no jump).
+  // Active CSS animation — cgTilePop / cgTileSpawn / cgTrophyPulse.
+  // Task 1: trophy tiles play infinite pulse unless another animation is active.
+  // Keyframe animations own the transform property during playback so we
+  // suppress the inline transform while any animation is running.
   const animation = isSpawning
     ? 'cgTileSpawn 0.42s ease-out'
     : isPopping
     ? 'cgTilePop 0.35s ease-out'
+    : isTrophy
+    ? 'cgTrophyPulse 2.2s ease-in-out infinite'
     : undefined;
 
   return (

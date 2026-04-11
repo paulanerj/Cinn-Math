@@ -28,3 +28,26 @@
   0%   { transform: translate(0px, 0px) scale(1.1); opacity: 1; }
   100% { transform: translate(var(--pdx), var(--pdy)) scale(0);   opacity: 0; }
 }
+
+/* Task 1 — Trophy pulse: locked trophy tiles breathe with a slow scale.
+   CSS-only; no state updates involved.  2.2 s matches the spec.            */
+@keyframes cgTrophyPulse {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.05); }
+}
+
+/* Task 4 — Board micro-shake: brief translateX rattle on trophy celebration. */
+@keyframes cgBoardShake {
+  0%   { transform: translateX(0); }
+  20%  { transform: translateX(-3px); }
+  40%  { transform: translateX(3px); }
+  60%  { transform: translateX(-3px); }
+  80%  { transform: translateX(3px); }
+  100% { transform: translateX(0); }
+}
+
+/* Task 4 — Score popup: "+1 trophy" floats upward and fades out in 900 ms. */
+@keyframes cgScorePopup {
+  0%   { transform: translateY(0)    translateX(-50%); opacity: 1; }
+  100% { transform: translateY(-52px) translateX(-50%); opacity: 0; }
+}
