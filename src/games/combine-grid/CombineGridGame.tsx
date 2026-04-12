@@ -58,15 +58,20 @@ import {
   DEFAULT_PROFILE_ID,
 } from '../../engine/public';
 import { runGravityOrchestrator } from '../../systems/GravityOrchestrator';
-import { computeTileSize as gridComputeTileSize } from '../../grid/GridSizing';
 import { tileBackground, DRAG_SRC_SHADOW } from './components/Tile';
 
 // ── Tile size ─────────────────────────────────────────────────────────────────
+// Formula per REBUILD_CONTRACT.md §2. GridSizing.ts must not be imported by
+// any CombineGrid file during Phases 1–8 (contract §3).
 
 function computeTileSize(): number {
   const availH = window.innerHeight - HUD_TOP_H - HUD_BOT_H - SAFE_MARGIN * 2;
   const availW = window.innerWidth - SAFE_MARGIN * 2;
-  return Math.min(gridComputeTileSize(availH, availW, ROWS, COLS), 80);
+  return Math.min(
+    Math.floor(availH / ROWS),
+    Math.floor(availW / COLS),
+    80,
+  );
 }
 
 // ── Task 5: Synthesised sound engine ─────────────────────────────────────────
