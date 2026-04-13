@@ -1,16 +1,12 @@
 // [ROLE] Game-local utilities for CombineGrid.
-// Only contains logic that is specific to CombineGrid's tap-select mechanic
-// and has no equivalent in the shared engine layer.
-//
-// Board creation, gravity, and target generation have been removed and are
-// now handled by the engine (SpawnEngine, GravitySystem, TargetGenerator)
-// via the component's effect layer in CombineGridGame.tsx.
+// Only contains logic specific to CombineGrid's selection mechanic and solvability.
 //
 // [INVARIANT] No Math.random() calls. No side effects. Pure functions only.
 
 import { GridPos } from '../types';
 import { evaluate } from '../../../engine/public';
 import type { EvalMode } from '../../../engine/public';
+import { ZERO_TILE_VALUE, BOMB_TILE_VALUE } from '../constants';
 
 /** Evaluates the arithmetic value of the selected tiles on a number[][] board. */
 export function evaluateSelection(
@@ -24,29 +20,35 @@ export function evaluateSelection(
 }
 
 /**
- * Returns true if at least one valid selection of 1, 2, or 3 tiles equals the target.
- * No adjacency constraint — CombineGrid allows selecting any tiles.
+ * Returns true if at least one valid multiplication pair on the board equals target.
  *
- * [NOTE] Intentionally searches non-adjacent combinations because CombineGrid's
- * TAP_TILE mechanic places no adjacency requirement on selections. This is
- * consistent with hasSolution being a stalemate detector, not a path validator.
+ * Excludes:
+ *   - trophyMask cells (locked trophies)
+ *   - frozenMask cells (hardened over-target results)
+ *   - BOMB_TILE_VALUE cells (bombs are not mergeable)
+ *   - ZERO_TILE_VALUE cells (zero × anything = 0, never equals target ≥ 2)
+ *   - empty cells (board value === 0)
  *
- * @param trophyMask  Optional mask of locked trophy tiles. Trophy cells are excluded
- *                    from the search — they cannot participate in tap-selections or
- *                    drag-merges, so a board is unsolvable if only trophy cells satisfy
- *                    the target.
+ * Note: if any zero tile exists on the board, there is always at least one
+ * tactical move available (zero reset), but that move won't directly satisfy
+ * the target, so we don't count it as "solvable" here.  The STALEMATE resolver
+ * will generate a new target if no number-pair solution exists.
  */
 export function hasSolution(
   board: number[][],
   target: number,
   mode: EvalMode,
   trophyMask?: boolean[][],
+  frozenMask?: boolean[][],
 ): boolean {
   const vals: number[] = [];
   for (let r = 0; r < board.length; r++) {
     for (let c = 0; c < (board[0]?.length ?? 0); c++) {
-      if (trophyMask?.[r]?.[c]) continue;   // locked trophy — cannot be selected
-      vals.push(board[r][c]);
+      if (trophyMask?.[r]?.[c]) continue;
+      if (frozenMask?.[r]?.[c]) continue;
+      const v = board[r][c];
+      if (v === 0 || v === BOMB_TILE_VALUE || v === ZERO_TILE_VALUE) continue;
+      vals.push(v);
     }
   }
   for (let i = 0; i < vals.length; i++) {

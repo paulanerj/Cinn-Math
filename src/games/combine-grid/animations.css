@@ -1,10 +1,9 @@
 /* ── CombineGrid tile animations ─────────────────────────────────────────────
    Imported once by CombineGridGame.tsx.
-   All keyframe names are prefixed with "cg" to avoid collisions.
+   All keyframe names are prefixed with "cg" to avoid global collisions.
    ──────────────────────────────────────────────────────────────────────────── */
 
-/* Phase 3 — Merge pop: destination tile bounces when it receives a result.
-   Plays on the dst tile immediately after DRAG_DROP commits a merge.        */
+/* Phase 3 — Merge pop: destination tile bounces when it receives a result.    */
 @keyframes cgTilePop {
   0%   { transform: scale(1); }
   35%  { transform: scale(1.28); }
@@ -12,8 +11,7 @@
   100% { transform: scale(1); }
 }
 
-/* Phase 4 — Spawn pop: tile appears from nothing after in-place respawn.
-   Plays on the src tile after RESPAWN_COMPLETE fills the empty slot.        */
+/* Phase 4 — Spawn pop: tile appears from nothing after in-place respawn.      */
 @keyframes cgTileSpawn {
   0%   { transform: scale(0);    opacity: 0; }
   52%  { transform: scale(1.18); opacity: 1; }
@@ -21,22 +19,23 @@
   100% { transform: scale(1);    opacity: 1; }
 }
 
-/* Phase 5 — Particle burst: sparkle for trophy merges.
+/* Phase 5 — Cube particle burst: sparkle for trophy/explosion events.
    Uses CSS custom properties --pdx / --pdy set as inline style on each particle
-   element so every particle travels in its own direction.                   */
+   element so every particle travels in its own direction.
+   Gravity-arc simulated by a slow downward drift in the keyframe.            */
 @keyframes cgParticleBurst {
-  0%   { transform: translate(0px, 0px) scale(1.1); opacity: 1; }
-  100% { transform: translate(var(--pdx), var(--pdy)) scale(0);   opacity: 0; }
+  0%   { transform: translate(0px, 0px) rotate(0deg) scale(1.1); opacity: 1; }
+  60%  { opacity: 0.7; }
+  100% { transform: translate(var(--pdx), calc(var(--pdy) + 24px)) rotate(45deg) scale(0); opacity: 0; }
 }
 
-/* Task 1 — Trophy pulse: locked trophy tiles breathe with a slow scale.
-   CSS-only; no state updates involved.  2.2 s matches the spec.            */
+/* Task 1 — Trophy pulse: locked trophy tiles breathe with a slow scale.       */
 @keyframes cgTrophyPulse {
-  0%, 100% { transform: scale(1); }
-  50%       { transform: scale(1.05); }
+  0%, 100% { transform: scale(1);    filter: brightness(1); }
+  50%       { transform: scale(1.06); filter: brightness(1.12); }
 }
 
-/* Task 4 — Board micro-shake: brief translateX rattle on trophy celebration. */
+/* Task 4 — Board micro-shake: brief translateX rattle on trophy celebration.  */
 @keyframes cgBoardShake {
   0%   { transform: translateX(0); }
   20%  { transform: translateX(-3px); }
@@ -46,8 +45,45 @@
   100% { transform: translateX(0); }
 }
 
-/* Task 4 — Score popup: "+1 trophy" floats upward and fades out in 900 ms. */
+/* Task 4 — Score popup: "+1 trophy" floats upward and fades out in 900 ms.   */
 @keyframes cgScorePopup {
-  0%   { transform: translateY(0)    translateX(-50%); opacity: 1; }
+  0%   { transform: translateY(0)     translateX(-50%); opacity: 1; }
   100% { transform: translateY(-52px) translateX(-50%); opacity: 0; }
+}
+
+/* Frozen tile shimmer: subtle icy glint sweeps across the frozen surface.     */
+@keyframes cgFrozenShimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Bomb idle pulse: gentle dark throbbing while the bomb waits on the board.   */
+@keyframes cgBombIdle {
+  0%, 100% { box-shadow: 0 0 6px rgba(180,0,0,0.3),  inset 0 1px 0 rgba(255,255,255,0.08); }
+  50%       { box-shadow: 0 0 14px rgba(220,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08); }
+}
+
+/* Bomb fuse burn: stroke-dashoffset animated via JS; glow on the fuse ember.  */
+@keyframes cgFuseGlow {
+  0%, 100% { filter: drop-shadow(0 0 2px #ff8800); }
+  50%       { filter: drop-shadow(0 0 6px #ffcc00); }
+}
+
+/* Bomb fuse countdown ring — shown when bomb is ignited.                      */
+@keyframes cgBombCountdown {
+  from { stroke-dashoffset: 126; } /* full circumference of r=20 circle       */
+  to   { stroke-dashoffset: 0; }
+}
+
+/* Tile destruction for bomb blast: scale down + fade (used per tile hit).     */
+@keyframes cgTileBlast {
+  0%   { transform: scale(1);   opacity: 1; }
+  30%  { transform: scale(1.15); opacity: 0.9; }
+  100% { transform: scale(0);   opacity: 0; }
+}
+
+/* One-tile sparkle: gentle rainbow shimmer for identity tiles (value=1).      */
+@keyframes cgOneGlow {
+  0%, 100% { filter: brightness(1) hue-rotate(0deg); }
+  50%       { filter: brightness(1.1) hue-rotate(15deg); }
 }
