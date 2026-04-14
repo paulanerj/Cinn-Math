@@ -556,6 +556,7 @@ export function reducer(state: CGState, action: Action): CGState {
       let newBonusMask = state.bonusMask;
       let newFrozenMask = state.frozenMask;
       for (const { pos, value, isBonus } of action.respawns) {
+        if (!pos || typeof pos.row !== 'number' || typeof pos.col !== 'number') continue;
         newBoard = newBoard.map((r, ri) =>
           r.map((v, ci) => (ri === pos.row && ci === pos.col ? value : v)),
         );

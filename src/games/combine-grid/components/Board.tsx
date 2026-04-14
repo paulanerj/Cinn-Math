@@ -5,6 +5,13 @@
 // Pure display component.  No dispatch, no PRNG, no local state.
 // Pointer handling is fully lifted to CombineGridGame's container div.
 // Tiles carry data-row / data-col for hit testing.
+//
+// DEFENSIVE GUARDS:
+//   All position arrays (clearingPositions, spawnedPositions) are filtered
+//   with .filter(Boolean) before iterating to guard against any undefined
+//   elements that could produce "Cannot read properties of undefined (reading 'row')".
+//   frozenMask and trophyMask are accessed with optional chaining (?.) to
+//   handle the case where either mask is not yet defined.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from 'react';
@@ -52,7 +59,7 @@ export default function Board({
   trophyMask,
   frozenMask,
   ignitedBombPos,
-  bombFuseProgress,
+  bombFuseProgress: _bombFuseProgress,
   dragSource,
   dropTarget,
   poppingPos,
@@ -62,8 +69,15 @@ export default function Board({
   isShaking,
   boardRef,
 }: BoardProps) {
+  // Guard: ensure grid has at least one row before accessing grid[0].
   const rows = grid.length;
   const cols = grid[0]?.length ?? 5;
+
+  // Defensive: filter out any undefined/null elements that could cause
+  // "Cannot read properties of undefined (reading 'row')" inside .some().
+  const safeClearing  = clearingPositions.filter(Boolean) as GridPos[];
+  const safeSpawned   = spawnedPositions.filter(Boolean)  as GridPos[];
+  const safeSelection = selection.filter(Boolean)         as GridPos[];
 
   const svgLine =
     dragSource !== null && dropTarget !== null
@@ -78,12 +92,30 @@ export default function Board({
   const boardW = 6 * 2 + cols * tileSize + (cols - 1) * GAP;
   const boardH = 6 * 2 + rows * tileSize + (rows - 1) * GAP;
 
+  // Guard: if grid is empty, render the board shell without tiles.
+  if (rows === 0) {
+    return (
+      <div
+        ref={boardRef}
+        style={{
+          position: 'relative',
+          background: 'linear-gradient(160deg, #C8B89A 0%, #B8A888 45%, #A89878 100%)',
+          borderRadius: 16,
+          padding: 6,
+          minWidth: 80,
+          minHeight: 80,
+          boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.35), 0 8px 32px rgba(0,0,0,0.45)',
+        }}
+      />
+    );
+  }
+
   return (
     <div
       ref={boardRef}
       style={{
         position: 'relative',
-        // Warm beige-stone board tray — matches mockup "premium puzzle tray" aesthetic.
+        // Warm beige-stone board tray.
         background: 'linear-gradient(160deg, #C8B89A 0%, #B8A888 45%, #A89878 100%)',
         borderRadius: 16,
         padding: 6,
@@ -119,15 +151,16 @@ export default function Board({
                 size={tileSize}
                 row={r}
                 col={c}
-                selected={isSelected(selection, pos)}
-                clearing={clearingPositions.some((p) => p.row === r && p.col === c)}
-                isTrophy={trophyMask[r]?.[c] ?? false}
-                isFrozen={frozenMask[r]?.[c] ?? false}
+                selected={isSelected(safeSelection, pos)}
+                clearing={safeClearing.some((p) => p.row === r && p.col === c)}
+                // Optional chaining (?.) prevents crash if masks are not yet initialised.
+                isTrophy={trophyMask?.[r]?.[c] ?? false}
+                isFrozen={frozenMask?.[r]?.[c] ?? false}
                 isBombLit={isBombLit}
                 isDragSource={dragSource !== null && dragSource.row === r && dragSource.col === c}
                 isDropTarget={isDropTgt}
                 isPopping={poppingPos !== null && poppingPos.row === r && poppingPos.col === c}
-                isSpawning={spawnedPositions.some((p) => p.row === r && p.col === c)}
+                isSpawning={safeSpawned.some((p) => p.row === r && p.col === c)}
                 mergeHighlight={isDropTgt ? (mergeHighlight ?? undefined) : undefined}
                 eqOverlay={isDropTgt && tileOverlay !== null ? tileOverlay : undefined}
               />

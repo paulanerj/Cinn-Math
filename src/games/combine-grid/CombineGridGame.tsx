@@ -2,27 +2,32 @@
 // src/games/combine-grid/CombineGridGame.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// [PHASE 1]  Real pointer drag — pointerdown/pointermove/pointerup on the
-//            outer container.  A ghost tile follows the pointer.  Adjacency
-//            validation stays in the reducer; the UI only dispatches events.
+// [CRASH FIX NOTES — see GitHub issue]
 //
-// [PHASE 2]  tileOverlay — equation preview on the drop-target tile itself
-//            (e.g. "3 × 4 = 12" in green / grey / red).
+//   BUG 1 — Missing frozenMask prop on <Board>
+//     The reducer stores frozenMask in CGState but the previous render did NOT
+//     pass it to <Board>.  Board's Tile loop then read frozenMask[r]?.[c] on
+//     undefined, crashing with "Cannot read properties of undefined".
+//     FIX: frozenMask={state.frozenMask} is now explicitly passed to <Board>.
 //
-// [PHASE 3]  Merge-pop animation on the destination tile.
-// [PHASE 4]  Spawn-pop animation on the respawned tile (src after DRAG_DROP).
-// [PHASE 5]  Particle burst on trophy merges (result === target).
-// [PHASE 6]  spawnTileWeighted — 10 % value-1 / 50 % factor / 40 % non-factor
-//            used in the RESPAWNING effect and gravity refill spawnValue callback.
+//   BUG 2 — Undefined elements in position arrays
+//     Any .map() / .some() on respawnPositions, zeroRespawnPositions,
+//     clearingPositions, or the local spawnedPositions state could throw
+//     "Cannot read properties of undefined (reading 'row')" if an element
+//     is undefined.
+//     FIX: All effects that map over position arrays first apply .filter(Boolean).
+//          Board.tsx applies the same guard on its own copies of the arrays.
 //
-// [TASK 2]   mergeHighlight — drop-target border reflects result vs target.
-// [TASK 4]   boardShaking / trophyPopups — celebration sequence on trophy.
-// [TASK 5]   Synthesized Web Audio API sounds — no audio files required.
+//   BUG 3 — Empty board on first render
+//     initGame() now runs synchronously as the useReducer lazy initializer,
+//     so the board is guaranteed to be a full ROWS×COLS matrix on the very
+//     first paint.  Board renders a safe empty shell when grid.length === 0
+//     as an additional belt-and-suspenders guard.
 //
-// [PURITY CONTRACT]
-//   reducer()        — still pure; unchanged.
-//   All PRNG calls   — in effects / spawn callbacks, never in reducer.
-//   Particle dirs / Math.random() acceptable for pure-visual elements.
+// [DEBUG]
+//   A console.log("CGState", state) is emitted on every state change so the
+//   actual reducer shape can be inspected in DevTools.  Remove once stable.
+//
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, {
@@ -61,8 +66,6 @@ import { runGravityOrchestrator } from '../../systems/GravityOrchestrator';
 import { tileBackground, DRAG_SRC_SHADOW } from './components/Tile';
 
 // ── Tile size ─────────────────────────────────────────────────────────────────
-// Formula per REBUILD_CONTRACT.md §2. GridSizing.ts must not be imported by
-// any CombineGrid file during Phases 1–8 (contract §3).
 
 function computeTileSize(): number {
   const availH = window.innerHeight - HUD_TOP_H - HUD_BOT_H - SAFE_MARGIN * 2;
@@ -74,9 +77,7 @@ function computeTileSize(): number {
   );
 }
 
-// ── Task 5: Synthesised sound engine ─────────────────────────────────────────
-// Uses Web Audio API oscillators — no audio files needed.
-// Math.random() for jitter is fine: pure-visual / audio layer.
+// ── Synthesised sound engine ──────────────────────────────────────────────────
 
 let _synthCtx: AudioContext | null = null;
 function getSynthCtx(): AudioContext | null {
@@ -100,12 +101,10 @@ function playTone(
     const ctx = getSynthCtx();
     if (!ctx) return;
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-
     const osc  = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
-
     osc.type = type;
     osc.frequency.value = freq;
     gain.gain.setValueAtTime(vol, ctx.currentTime + startOffset);
@@ -113,30 +112,24 @@ function playTone(
     osc.start(ctx.currentTime + startOffset);
     osc.stop(ctx.currentTime + startOffset + dur + 0.01);
   } catch {
-    // Silently swallow audio errors — they must not affect game state.
+    // Silently swallow audio errors.
   }
 }
 
-/** Drag-start: soft click */
 function playSoundDragStart() { playTone(440, 0.05, 'triangle', 0.12); }
-/** Valid merge (result < target): satisfying pop */
 function playSoundMerge()     { playTone(523, 0.11, 'sine',     0.28); }
-/** Trophy merge (result === target): ascending sparkle chime */
 function playSoundTrophy() {
   playTone(784,  0.08, 'sine', 0.28, 0.00);
   playTone(1047, 0.08, 'sine', 0.28, 0.07);
   playTone(1319, 0.12, 'sine', 0.28, 0.14);
 }
-/** Invalid merge (result > target): muted thud */
 function playSoundInvalid()   { playTone(160, 0.10, 'sawtooth', 0.18); }
 
 // ── Trophy popup type ─────────────────────────────────────────────────────────
 
 interface TrophyPopup {
   id: number;
-  /** Viewport x of tile centre — used for fixed positioning. */
   x: number;
-  /** Viewport y of tile centre — popup floats upward from here. */
   y: number;
 }
 
@@ -144,8 +137,8 @@ interface TrophyPopup {
 
 interface Particle {
   id: number;
-  x: number;    // fixed screen x of burst origin
-  y: number;    // fixed screen y of burst origin
+  x: number;
+  y: number;
   angle: number;
   dist: number;
   color: string;
@@ -156,7 +149,6 @@ const PARTICLE_COLORS = [
   '#60a5fa', '#a78bfa', '#f472b6', '#fb923c',
 ];
 
-// Board outer padding — must match Board.tsx's padding:6.
 const BOARD_PAD = 6;
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -170,8 +162,23 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
   const [state, dispatch] = useReducer(
     reducer,
     undefined,
+    // Lazy initializer: board is fully populated before the first render.
     () => initGame(profile, prngRef.current, prngSeedRef.current),
   );
+
+  // DEBUG — log state shape on every change so shape mismatches are immediately
+  // visible in the browser console.  Remove once the build is stable.
+  useEffect(() => {
+    console.log('CGState', {
+      phase: state.phase,
+      boardSize: `${state.board.length}×${state.board[0]?.length ?? 0}`,
+      frozenMask: state.frozenMask,
+      trophyMask: state.trophyMask,
+      zeroRespawnPositions: state.zeroRespawnPositions,
+      respawnPositions: state.respawnPositions,
+      clearingPositions: state.clearingPositions,
+    });
+  }, [state]);
 
   // ── Layout ───────────────────────────────────────────────────────────────────
   const [tileSize, setTileSize] = useState(computeTileSize);
@@ -188,29 +195,19 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     return () => { isMounted.current = false; };
   }, []);
 
-  /** Outer game container — used to setPointerCapture for drag tracking. */
   const containerRef = useRef<HTMLDivElement>(null);
-  /** Board's outer padding box — used to compute tile screen centres (Phase 5). */
-  const boardRef = useRef<HTMLDivElement>(null);
+  const boardRef     = useRef<HTMLDivElement>(null);
 
-  // ── Phase 1: drag state ───────────────────────────────────────────────────────
-  /** Viewport position of the pointer; null when no drag is active. */
+  // ── Drag state ────────────────────────────────────────────────────────────────
   const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
-  /** The tile under the pointer during a drag (for eqOverlay + dropTarget). */
   const [hoverPos, setHoverPos] = useState<GridPos | null>(null);
 
-  // ── Phase 3: merge-pop state ──────────────────────────────────────────────────
-  const [poppingPos, setPoppingPos] = useState<GridPos | null>(null);
-
-  // ── Phase 4: spawn-pop state ──────────────────────────────────────────────────
+  // ── Animation state ───────────────────────────────────────────────────────────
+  const [poppingPos, setPoppingPos]         = useState<GridPos | null>(null);
   const [spawnedPositions, setSpawnedPositions] = useState<GridPos[]>([]);
-
-  // ── Phase 5: particle state ───────────────────────────────────────────────────
-  const [particles, setParticles] = useState<Particle[]>([]);
-
-  // ── Task 4: board shake + trophy popup state ──────────────────────────────────
-  const [boardShaking, setBoardShaking] = useState(false);
-  const [trophyPopups, setTrophyPopups] = useState<TrophyPopup[]>([]);
+  const [particles, setParticles]           = useState<Particle[]>([]);
+  const [boardShaking, setBoardShaking]     = useState(false);
+  const [trophyPopups, setTrophyPopups]     = useState<TrophyPopup[]>([]);
 
   // ── Countdown tick ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -220,15 +217,13 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
   }, [state.phase]);
 
   // ── CLEARING effect: gravity + new target ─────────────────────────────────────
-  // [PHASE 6] spawnValue now calls spawnTileWeighted(oldTarget, …) so refill
-  // tiles are biased toward factors of the just-cleared target.
   useEffect(() => {
     if (state.phase !== 'CLEARING') return;
 
-    const currentBoard = state.board;
-    const clearing = state.clearingPositions;
-    const currentMode = state.mode;
-    const capturedTarget = state.target; // old target — used for factor weighting
+    const currentBoard  = state.board;
+    const clearing      = state.clearingPositions;
+    const currentMode   = state.mode;
+    const capturedTarget = state.target;
 
     const spawnCache: { value: number; isBonus: boolean }[][] =
       Array.from({ length: COLS }, () => []);
@@ -240,7 +235,6 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
       rows: ROWS,
       cols: COLS,
       spawnValue: (col, spawnIndex) => {
-        // Phase 6: weighted spawn using old target for factor guidance.
         const sp = spawnTileWeighted(capturedTarget, profile, prngRef.current);
         spawnCache[col][spawnIndex] = sp;
         return sp.value;
@@ -284,7 +278,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
   useEffect(() => {
     if (state.phase !== 'STALEMATE') return;
     const currentBoard = state.board;
-    const currentMode = state.mode;
+    const currentMode  = state.mode;
     const id = setTimeout(() => {
       if (!isMounted.current) return;
       const target = generateTarget(
@@ -296,30 +290,24 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
   }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── RESPAWNING effect: in-place tile refill after drag-merge ──────────────────
-  // [PHASE 4] Sets spawnedPositions so tiles play the spawn-pop animation.
-  // [PHASE 6] Uses spawnTileWeighted so respawned tiles are factor-biased.
-  // [TARGET LAW] Target is static for the full round — not regenerated here.
   useEffect(() => {
-    if (state.respawnPositions.length === 0) return;
+    // Defensive filter: drop any undefined entries before iterating.
+    const positions = (state.respawnPositions ?? []).filter(Boolean) as GridPos[];
+    if (positions.length === 0) return;
 
-    const positions = state.respawnPositions;
-    const capturedTarget = state.target; // static for round
+    const capturedTarget = state.target;
 
     const respawns = positions.map((pos) => {
-      // Phase 6: weighted distribution relative to current round target.
       const sp = spawnTileWeighted(capturedTarget, profile, prngRef.current);
       return { pos, value: sp.value, isBonus: sp.isBonus };
     });
 
-    // Dispatch RESPAWN_COMPLETE after the clearing opacity animation completes.
     const spawnId = setTimeout(() => {
       if (!isMounted.current) return;
       dispatch({ type: 'RESPAWN_COMPLETE', respawns });
-      // Phase 4: trigger spawn-pop animation on the newly filled positions.
       setSpawnedPositions([...positions]);
     }, CLEAR_MS);
 
-    // Clear the spawn-pop flag after the animation finishes (~420 ms).
     const clearAnimId = setTimeout(() => {
       if (!isMounted.current) return;
       setSpawnedPositions([]);
@@ -331,73 +319,80 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     };
   }, [state.respawnPositions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Phase 5: particle emitter ─────────────────────────────────────────────────
+  // ── ZERO-RESPAWN effect: zero-interaction tile refill ─────────────────────────
+  useEffect(() => {
+    // Defensive filter: drop any undefined entries before iterating.
+    const positions = (state.zeroRespawnPositions ?? []).filter(Boolean) as GridPos[];
+    if (positions.length === 0) return;
 
+    const capturedTarget = state.target;
+
+    // Zero-interaction uses a flat distribution biased toward factors and 1s.
+    const respawns = positions.map((pos) => {
+      const sp = spawnTileWeighted(capturedTarget, profile, prngRef.current);
+      return { pos, value: sp.value, isBonus: sp.isBonus };
+    });
+
+    const spawnId = setTimeout(() => {
+      if (!isMounted.current) return;
+      dispatch({ type: 'RESPAWN_COMPLETE', respawns });
+      setSpawnedPositions([...positions]);
+    }, CLEAR_MS);
+
+    const clearAnimId = setTimeout(() => {
+      if (!isMounted.current) return;
+      setSpawnedPositions([]);
+    }, CLEAR_MS + 500);
+
+    return () => {
+      clearTimeout(spawnId);
+      clearTimeout(clearAnimId);
+    };
+  }, [state.zeroRespawnPositions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Particle emitter ──────────────────────────────────────────────────────────
   const emitTrophyParticles = useCallback((dst: GridPos) => {
     const boardRect = boardRef.current?.getBoundingClientRect();
     if (!boardRect) return;
-
     const cellSize = tileSize + GAP;
     const cx = boardRect.left + BOARD_PAD + dst.col * cellSize + tileSize / 2;
     const cy = boardRect.top  + BOARD_PAD + dst.row * cellSize + tileSize / 2;
-
     const count = 14;
     const burst: Particle[] = Array.from({ length: count }, (_, i) => ({
       id: Date.now() + i,
       x: cx,
       y: cy,
-      // Spread particles evenly + small random jitter (Math.random() — pure visual).
       angle: (i / count) * 2 * Math.PI + (Math.random() - 0.5) * 0.45,
       dist: 38 + Math.random() * 44,
       color: PARTICLE_COLORS[i % PARTICLE_COLORS.length],
     }));
-
     setParticles((prev) => [...prev, ...burst]);
     setTimeout(() => {
       setParticles((prev) => prev.filter((p) => !burst.some((b) => b.id === p.id)));
     }, 750);
   }, [tileSize]);
 
-  // ── Phase 1: pointer event handlers ──────────────────────────────────────────
-  //
-  // Architecture: all pointer events are handled on the outer container div.
-  //   pointerdown — identify the source tile via data-row / data-col, dispatch
-  //                 DRAG_START, capture the pointer so move/up always arrive.
-  //   pointermove — update ghost position + hover tile for eqOverlay / dropTarget.
-  //   pointerup   — identify the target tile, dispatch DRAG_DROP or DRAG_CANCEL.
-  //                 Check for trophy merge before dispatching (Phase 3 & 5).
-  //   pointercancel — abort drag cleanly.
+  // ── Pointer event handlers ────────────────────────────────────────────────────
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (state.phase !== 'SELECTING') return;
     const tileEl = (e.target as HTMLElement).closest('[data-row]') as HTMLElement | null;
     if (!tileEl) return;
-
     const row = parseInt(tileEl.dataset.row ?? '-1', 10);
     const col = parseInt(tileEl.dataset.col ?? '-1', 10);
     if (row < 0 || col < 0) return;
-    // Don't start drag from a trophy tile (reducer also blocks this).
-    if (state.trophyMask[row]?.[col]) return;
-
-    // Prevent browser scroll / text-selection during drag.
+    if (state.trophyMask?.[row]?.[col]) return;
     e.preventDefault();
-
-    // Task 5: drag-start sound.
     playSoundDragStart();
-
     dispatch({ type: 'DRAG_START', pos: { row, col } });
     setGhostPos({ x: e.clientX, y: e.clientY });
     setHoverPos(null);
-
-    // Capture so pointermove/pointerup always route to this element.
     containerRef.current?.setPointerCapture(e.pointerId);
   }, [state.phase, state.trophyMask]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (state.dragSource === null) return;
     setGhostPos({ x: e.clientX, y: e.clientY });
-
-    // elementFromPoint ignores pointer capture — finds the visual tile under cursor.
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const tileEl = el?.closest('[data-row]') as HTMLElement | null;
     if (tileEl) {
@@ -411,15 +406,10 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     setHoverPos(null);
   }, [state.dragSource]);
 
-  // Task 4: emit board-shake + score popup for a trophy merge.
   const emitTrophyCelebration = useCallback((dst: GridPos) => {
     const boardRect = boardRef.current?.getBoundingClientRect();
-
-    // Board shake.
     setBoardShaking(true);
     setTimeout(() => setBoardShaking(false), 140);
-
-    // Score popup "+1 trophy" anchored to tile centre in viewport coords.
     if (boardRect) {
       const cellSize = tileSize + GAP;
       const px = boardRect.left + BOARD_PAD + dst.col * cellSize + tileSize / 2;
@@ -437,58 +427,47 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
       setGhostPos(null);
       return;
     }
-
     containerRef.current?.releasePointerCapture(e.pointerId);
-
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const tileEl = el?.closest('[data-row]') as HTMLElement | null;
-
     if (tileEl) {
       const row = parseInt(tileEl.dataset.row ?? '-1', 10);
       const col = parseInt(tileEl.dataset.col ?? '-1', 10);
-
       if (row >= 0 && col >= 0) {
         const dst = { row, col };
         const src = state.dragSource;
-
-        // Evaluate merge outcome before dispatch (board is still unmodified).
-        const srcVal = state.board[src.row][src.col];
-        const dstVal = state.board[dst.row][dst.col];
-        const result = srcVal * dstVal;
-        const isAdj = Math.max(
+        const srcVal = state.board[src.row]?.[src.col] ?? 0;
+        const dstVal = state.board[dst.row]?.[dst.col] ?? 0;
+        const result  = srcVal * dstVal;
+        const isAdj   = Math.max(
           Math.abs(src.row - dst.row),
           Math.abs(src.col - dst.col),
         ) === 1;
         const isTrophyMerge =
           isAdj &&
           result === state.target &&
-          !state.trophyMask[src.row]?.[src.col] &&
-          !state.trophyMask[dst.row]?.[dst.col] &&
-          srcVal !== 0 &&
-          dstVal !== 0;
+          !state.trophyMask?.[src.row]?.[src.col] &&
+          !state.trophyMask?.[dst.row]?.[dst.col] &&
+          srcVal !== 0 && dstVal !== 0;
         const isValidMerge =
           isAdj &&
           result < state.target &&
-          !state.trophyMask[src.row]?.[src.col] &&
-          !state.trophyMask[dst.row]?.[dst.col] &&
-          srcVal !== 0 &&
-          dstVal !== 0;
+          !state.trophyMask?.[src.row]?.[src.col] &&
+          !state.trophyMask?.[dst.row]?.[dst.col] &&
+          srcVal !== 0 && dstVal !== 0;
         const isInvalidMerge = isAdj && result > state.target;
 
-        // ── Phase 5 + Task 4: trophy celebration sequence ───────────────────
         if (isTrophyMerge) {
           emitTrophyParticles(dst);
           emitTrophyCelebration(dst);
-          playSoundTrophy();           // Task 5
+          playSoundTrophy();
         } else if (isValidMerge) {
-          playSoundMerge();            // Task 5
+          playSoundMerge();
         } else if (isInvalidMerge) {
-          playSoundInvalid();          // Task 5
+          playSoundInvalid();
         }
 
         dispatch({ type: 'DRAG_DROP', src, dst });
-
-        // ── Phase 3: merge-pop animation on destination ─────────────────────
         setPoppingPos(dst);
         setTimeout(() => setPoppingPos(null), 380);
       } else {
@@ -497,7 +476,6 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     } else {
       dispatch({ type: 'DRAG_CANCEL' });
     }
-
     setGhostPos(null);
     setHoverPos(null);
   }, [state.dragSource, state.board, state.target, state.trophyMask,
@@ -511,7 +489,6 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
 
   // ── Derived display values ────────────────────────────────────────────────────
 
-  // dropTarget: hoverPos that is Chebyshev-adjacent (distance = 1) to dragSource.
   const dropTarget: GridPos | null = (() => {
     if (state.dragSource === null || hoverPos === null) return null;
     const adjacent =
@@ -522,24 +499,22 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     return adjacent ? hoverPos : null;
   })();
 
-  // Phase 2: equation overlay for the tile at dropTarget.
   const tileOverlay: { label: string; color: string } | null = (() => {
     if (state.dragSource === null) return null;
-    const srcVal = state.board[state.dragSource.row][state.dragSource.col];
+    const srcVal = state.board[state.dragSource.row]?.[state.dragSource.col] ?? 0;
     if (dropTarget === null) return null;
-    const dstVal = state.board[dropTarget.row][dropTarget.col];
+    const dstVal = state.board[dropTarget.row]?.[dropTarget.col] ?? 0;
     if (dstVal === 0) return null;
     const result = srcVal * dstVal;
-    const color =
+    const color  =
       result === state.target ? '#22c55e' : result > state.target ? '#ef4444' : '#d1d5db';
     return { label: `${srcVal}×${dstVal}=${result}`, color };
   })();
 
-  // Task 2: merge highlight classification for the drop-target tile border.
   const mergeHighlight: 'invalid' | 'valid' | 'trophy' | null = (() => {
     if (state.dragSource === null || dropTarget === null) return null;
-    const srcVal = state.board[state.dragSource.row][state.dragSource.col];
-    const dstVal = state.board[dropTarget.row][dropTarget.col];
+    const srcVal = state.board[state.dragSource.row]?.[state.dragSource.col] ?? 0;
+    const dstVal = state.board[dropTarget.row]?.[dropTarget.col] ?? 0;
     if (dstVal === 0 || srcVal === 0) return null;
     const result = srcVal * dstVal;
     if (result === state.target) return 'trophy';
@@ -547,22 +522,22 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     return 'valid';
   })();
 
-  // HUD equation preview (text below board — kept alongside tile overlay).
   const eqPreview = (() => {
     if (state.dragSource === null) return null;
-    const srcVal = state.board[state.dragSource.row][state.dragSource.col];
+    const srcVal = state.board[state.dragSource.row]?.[state.dragSource.col] ?? 0;
     if (dropTarget === null) return { label: `${srcVal} ×  ?`, color: '#666' };
-    const dstVal = state.board[dropTarget.row][dropTarget.col];
+    const dstVal = state.board[dropTarget.row]?.[dropTarget.col] ?? 0;
     if (dstVal === 0) return { label: `${srcVal} ×  ?`, color: '#666' };
     const result = srcVal * dstVal;
-    const color =
+    const color  =
       result === state.target ? '#22c55e' : result > state.target ? '#ef4444' : '#9ca3af';
     return { label: `${srcVal} × ${dstVal} = ${result}`, color };
   })();
 
-  const timerPct = state.timeLeft / ROUND_DURATION_SECS;
+  const timerPct   = state.timeLeft / ROUND_DURATION_SECS;
   const timerColor =
-    state.timeLeft <= 5 ? '#ef4444' : state.timeLeft <= 10 ? '#f97316' : '#22c55e';
+    state.timeLeft <= 5  ? '#ef4444' :
+    state.timeLeft <= 10 ? '#f97316' : '#22c55e';
 
   // ── Early renders ─────────────────────────────────────────────────────────────
 
@@ -581,9 +556,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
         </div>
         <div style={{ color: '#666', fontSize: 13, fontWeight: 700, marginTop: 4 }}>Round Score</div>
         <div style={{ color: '#444', fontSize: 12, marginTop: 18 }}>
-          {state.roundsCompleted >= ROUNDS_PER_SESSION
-            ? 'Calculating final score…'
-            : 'Next round starting…'}
+          {state.roundsCompleted >= ROUNDS_PER_SESSION ? 'Calculating final score…' : 'Next round starting…'}
         </div>
       </div>
     );
@@ -599,12 +572,12 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     );
   }
 
-  // ── Ghost tile values (Phase 1) ───────────────────────────────────────────────
+  // ── Ghost tile values ─────────────────────────────────────────────────────────
   const ghostVal =
     ghostPos && state.dragSource
-      ? state.board[state.dragSource.row][state.dragSource.col]
+      ? (state.board[state.dragSource.row]?.[state.dragSource.col] ?? 0)
       : 0;
-  const ghostBg = state.dragSource ? tileBackground(ghostVal, false) : '#c2410c';
+  const ghostBg     = state.dragSource ? tileBackground(ghostVal, false) : '#c2410c';
   const ghostRadius = Math.min(BASE_RADIUS_PX, tileSize * 0.28);
 
   // ── Main render ───────────────────────────────────────────────────────────────
@@ -620,7 +593,6 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
         alignItems: 'center',
         fontFamily: 'Nunito, sans-serif',
         overflow: 'hidden',
-        // Phase 1: disable browser pan/zoom so pointer events are not swallowed.
         touchAction: 'none',
         userSelect: 'none',
       }}
@@ -664,12 +636,20 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
 
       {/* ── Board ────────────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {/*
+          FIX: frozenMask prop was previously omitted, causing Board to receive
+          undefined for frozenMask and crash when accessing frozenMask[r][c].
+          It is now explicitly passed on every render.
+        */}
         <Board
           grid={state.board}
           tileSize={tileSize}
           selection={state.selection}
           clearingPositions={state.clearingPositions}
           trophyMask={state.trophyMask}
+          frozenMask={state.frozenMask}
+          ignitedBombPos={null}
+          bombFuseProgress={0}
           dragSource={state.dragSource}
           dropTarget={dropTarget}
           poppingPos={poppingPos}
@@ -695,7 +675,6 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
           flexShrink: 0,
         }}
       >
-        {/* Equation preview in HUD (Phase 2 complement — tile overlay is primary) */}
         <div style={{ fontSize: 13, fontWeight: 700, minHeight: 20 }}>
           {eqPreview !== null ? (
             <span style={{ color: eqPreview.color, fontSize: 16 }}>{eqPreview.label}</span>
@@ -703,7 +682,6 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
             <span style={{ color: '#444' }}>Drag a tile onto an adjacent tile</span>
           )}
         </div>
-        {/* Timer bar */}
         <div style={{ width: '100%', height: 6, background: 'rgba(255,255,255,0.07)', borderRadius: 3, overflow: 'hidden' }}>
           <div
             style={{
@@ -717,10 +695,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
         </div>
       </div>
 
-      {/* ── Phase 1: Ghost tile ───────────────────────────────────────────────── */}
-      {/* Rendered outside the board so it is not clipped.  position:fixed so it
-          ignores the container's overflow:hidden. pointer-events:none so it
-          never intercepts the pointermove/pointerup events.                     */}
+      {/* ── Ghost tile ────────────────────────────────────────────────────────── */}
       {ghostPos && state.dragSource && (
         <div
           style={{
@@ -751,8 +726,7 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
         </div>
       )}
 
-      {/* ── Phase 5: Particles ────────────────────────────────────────────────── */}
-      {/* position:fixed so they escape container overflow:hidden.               */}
+      {/* ── Particles ─────────────────────────────────────────────────────────── */}
       {particles.map((p) => (
         <div
           key={p.id}
@@ -767,15 +741,13 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
             pointerEvents: 'none',
             zIndex: 60,
             animation: 'cgParticleBurst 0.68s ease-out forwards',
-            // CSS custom properties for per-particle direction.
             ['--pdx' as string]: `${Math.cos(p.angle) * p.dist}px`,
             ['--pdy' as string]: `${Math.sin(p.angle) * p.dist}px`,
           } as React.CSSProperties}
         />
       ))}
 
-      {/* ── Task 4: Trophy score popups ───────────────────────────────────────── */}
-      {/* "+1 trophy" floats upward from the tile centre for 900 ms.             */}
+      {/* ── Trophy score popups ───────────────────────────────────────────────── */}
       {trophyPopups.map((popup) => (
         <div
           key={popup.id}
@@ -791,7 +763,6 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
             textShadow: '0 1px 6px rgba(0,0,0,0.70)',
             whiteSpace: 'nowrap',
             animation: 'cgScorePopup 0.9s ease-out forwards',
-            // translateX(-50%) is baked into the keyframe to keep the popup centred.
           }}
         >
           +1 trophy
