@@ -5,13 +5,8 @@
 // Pure display component.  No dispatch, no PRNG, no local state.
 // Pointer handling is fully lifted to CombineGridGame's container div.
 // Tiles carry data-row / data-col for hit testing.
-//
-// DEFENSIVE GUARDS:
-//   All position arrays (clearingPositions, spawnedPositions) are filtered
-//   with .filter(Boolean) before iterating to guard against any undefined
-//   elements that could produce "Cannot read properties of undefined (reading 'row')".
-//   frozenMask and trophyMask are accessed with optional chaining (?.) to
-//   handle the case where either mask is not yet defined.
+// Position arrays are guaranteed valid by assertValidPositions() in CombineGridGame
+// before any dispatch — no defensive filtering needed here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from 'react';
@@ -72,12 +67,6 @@ export default function Board({
   // Guard: ensure grid has at least one row before accessing grid[0].
   const rows = grid.length;
   const cols = grid[0]?.length ?? 5;
-
-  // Defensive: filter out any undefined/null elements that could cause
-  // "Cannot read properties of undefined (reading 'row')" inside .some().
-  const safeClearing  = clearingPositions.filter(Boolean) as GridPos[];
-  const safeSpawned   = spawnedPositions.filter(Boolean)  as GridPos[];
-  const safeSelection = selection.filter(Boolean)         as GridPos[];
 
   const svgLine =
     dragSource !== null && dropTarget !== null
@@ -151,8 +140,8 @@ export default function Board({
                 size={tileSize}
                 row={r}
                 col={c}
-                selected={isSelected(safeSelection, pos)}
-                clearing={safeClearing.some((p) => p.row === r && p.col === c)}
+                selected={isSelected(selection, pos)}
+                clearing={clearingPositions.some((p) => p.row === r && p.col === c)}
                 // Optional chaining (?.) prevents crash if masks are not yet initialised.
                 isTrophy={trophyMask?.[r]?.[c] ?? false}
                 isFrozen={frozenMask?.[r]?.[c] ?? false}
@@ -160,7 +149,7 @@ export default function Board({
                 isDragSource={dragSource !== null && dragSource.row === r && dragSource.col === c}
                 isDropTarget={isDropTgt}
                 isPopping={poppingPos !== null && poppingPos.row === r && poppingPos.col === c}
-                isSpawning={safeSpawned.some((p) => p.row === r && p.col === c)}
+                isSpawning={spawnedPositions.some((p) => p.row === r && p.col === c)}
                 mergeHighlight={isDropTgt ? (mergeHighlight ?? undefined) : undefined}
                 eqOverlay={isDropTgt && tileOverlay !== null ? tileOverlay : undefined}
               />

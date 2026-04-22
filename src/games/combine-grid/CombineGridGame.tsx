@@ -12,11 +12,11 @@
 //
 //   BUG 2 — Undefined elements in position arrays
 //     Any .map() / .some() on respawnPositions, zeroRespawnPositions,
-//     clearingPositions, or the local spawnedPositions state could throw
-//     "Cannot read properties of undefined (reading 'row')" if an element
-//     is undefined.
-//     FIX: All effects that map over position arrays first apply .filter(Boolean).
-//          Board.tsx applies the same guard on its own copies of the arrays.
+//     clearingPositions could throw "Cannot read properties of undefined
+//     (reading 'row')" if an element is undefined.
+//     FIX: assertValidPositions() is called at every read site.  Arrays are
+//          guaranteed valid at source (reducer only writes well-formed objects)
+//          so an assertion throw means a genuine upstream bug.
 //
 //   BUG 3 — Empty board on first render
 //     initGame() now runs synchronously as the useReducer lazy initializer,
@@ -62,8 +62,19 @@ import {
   getProfile,
   DEFAULT_PROFILE_ID,
 } from '../../engine/public';
-import { runGravityOrchestrator } from '../../systems/GravityOrchestrator';
 import { tileBackground, DRAG_SRC_SHADOW } from './components/Tile';
+
+// ── Position invariant ────────────────────────────────────────────────────────
+// Throws during development if any position object is malformed.
+// Replaces silent .filter(Boolean) masking — we want loud failures, not
+// hidden corruption.
+function assertValidPositions(positions: GridPos[]): void {
+  for (const p of positions) {
+    if (!p || typeof p.row !== 'number' || typeof p.col !== 'number') {
+      throw new Error(`[CombineGrid] Invalid position: ${JSON.stringify(p)}`);
+    }
+  }
+}
 
 // ── Tile size ─────────────────────────────────────────────────────────────────
 
@@ -216,45 +227,40 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     return () => clearInterval(id);
   }, [state.phase]);
 
-  // ── CLEARING effect: gravity + new target ─────────────────────────────────────
+  // ── CLEARING effect: static in-place refill (STATIC BOARD LAW) ──────────────
+  // No gravity. No tile movement. No column compaction.
+  // Each cleared position receives a freshly spawned tile at that exact cell.
   useEffect(() => {
     if (state.phase !== 'CLEARING') return;
 
-    const currentBoard  = state.board;
-    const clearing      = state.clearingPositions;
-    const currentMode   = state.mode;
+    const clearing       = state.clearingPositions;
+    const currentMode    = state.mode;
     const capturedTarget = state.target;
 
-    const spawnCache: { value: number; isBonus: boolean }[][] =
-      Array.from({ length: COLS }, () => []);
+    assertValidPositions(clearing);
 
-    const orchResult = runGravityOrchestrator({
-      grid: currentBoard,
-      bonusMask: state.bonusMask,
-      clearedPositions: clearing,
-      rows: ROWS,
-      cols: COLS,
-      spawnValue: (col, spawnIndex) => {
-        const sp = spawnTileWeighted(capturedTarget, profile, prngRef.current);
-        spawnCache[col][spawnIndex] = sp;
-        return sp.value;
-      },
-      spawnBonus: (col, spawnIndex) => spawnCache[col][spawnIndex]?.isBonus ?? false,
-      generateNextTarget: (settledGrid) =>
-        generateTarget(settledGrid, ROWS, COLS, currentMode, profile, prngRef.current),
-    });
+    // Spawn in-place: mutate a local copy only — board is immutable in state.
+    const newBoard     = state.board.map(r => [...r]);
+    const newBonusMask = state.bonusMask.map(r => [...r]);
+    for (const pos of clearing) {
+      const sp = spawnTileWeighted(capturedTarget, profile, prngRef.current);
+      newBoard[pos.row][pos.col]     = sp.value;
+      newBonusMask[pos.row][pos.col] = sp.isBonus;
+    }
+    const newTarget = generateTarget(newBoard, ROWS, COLS, currentMode, profile, prngRef.current);
 
     const id = setTimeout(() => {
       if (!isMounted.current) return;
-      dispatch({
-        type: 'CLEAR_COMPLETE',
-        board: orchResult.grid,
-        bonusMask: orchResult.bonusMask,
-        target: orchResult.target,
-      });
+      setSpawnedPositions([...clearing]);
+      dispatch({ type: 'CLEAR_COMPLETE', board: newBoard, bonusMask: newBonusMask, target: newTarget });
     }, CLEAR_MS);
 
-    return () => clearTimeout(id);
+    const clearAnimId = setTimeout(() => {
+      if (!isMounted.current) return;
+      setSpawnedPositions([]);
+    }, CLEAR_MS + 500);
+
+    return () => { clearTimeout(id); clearTimeout(clearAnimId); };
   }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── ROUND_OVER effect: spawn fresh board for next round ───────────────────────
@@ -289,10 +295,10 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
     return () => clearTimeout(id);
   }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── RESPAWNING effect: in-place tile refill after drag-merge ──────────────────
+  // ── RESPAWNING effect: in-place tile refill after drag-merge / bomb ──────────
   useEffect(() => {
-    // Defensive filter: drop any undefined entries before iterating.
-    const positions = (state.respawnPositions ?? []).filter(Boolean) as GridPos[];
+    const positions = state.respawnPositions;
+    assertValidPositions(positions);
     if (positions.length === 0) return;
 
     const capturedTarget = state.target;
@@ -321,8 +327,8 @@ export default function CombineGridGame({ onBack }: { onBack?: () => void }) {
 
   // ── ZERO-RESPAWN effect: zero-interaction tile refill ─────────────────────────
   useEffect(() => {
-    // Defensive filter: drop any undefined entries before iterating.
-    const positions = (state.zeroRespawnPositions ?? []).filter(Boolean) as GridPos[];
+    const positions = state.zeroRespawnPositions;
+    assertValidPositions(positions);
     if (positions.length === 0) return;
 
     const capturedTarget = state.target;
